@@ -1,10 +1,11 @@
 
-from collections import defaultdict
 import math
-import random
 import secrets
 import struct
-from typing import Any, Union, List, Set, Tuple, TypeVar
+import hmac
+import hashlib
+import json
+from typing import Union, List, Set, Tuple, TypeVar, Dict
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
@@ -424,80 +425,208 @@ def collect_chars_by_indexes(character_blocks: List[List[str]], indexes: List[in
     return [char for idx in indexes for char in character_blocks[idx]]
 
 
-def encrypt(password:str, redundancy:int, message:str):
-    
-    # Generate all crypto stuff, salts/settings/seeds
+
+
+def compute_digest(data: dict, digest_passphrase: str) -> str:
+    """
+    Compute an HMAC-SHA256 digest of the input data using the provided passphrase.
+    """
+    key = digest_passphrase.encode('utf-8')
+    message = json.dumps(data, sort_keys=True).encode('utf-8')
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def verify_digest(data: dict, digest_passphrase: str) -> bool:
+    """
+    Verifies that the HMAC digest in the data matches the expected value.
+    """
+    provided_digest = data.get("digest")
+    if not provided_digest:
+        raise ValueError("No digest found in encrypted data.")
+
+    # Make a copy without the digest field
+    data_copy = data.copy()
+    del data_copy["digest"]
+    expected_digest = compute_digest(data_copy, digest_passphrase)
+    return hmac.compare_digest(provided_digest, expected_digest)
+
+
+def handle_digest_verification(
+    json_data: dict,
+    digest_passphrase: str | None,
+    require_digest: bool = True
+) -> None:
+    """
+    Handles all digest validation logic before proceeding with decryption.
+
+    Args:
+        json_data (dict): The encrypted message dictionary.
+        digest_passphrase (str | None): The passphrase to verify the digest (optional).
+        require_digest (bool): Whether to enforce digest presence/validation strictly.
+
+    Raises:
+        ValueError: If digest conditions do not align with passphrase usage.
+    """
+    has_digest = "digest" in json_data
+
+    if has_digest and digest_passphrase:
+        # Verify the digest matches
+        if not verify_digest(json_data, digest_passphrase):
+            raise ValueError("Digest verification failed. Message may have been tampered with.")
+    elif has_digest and not digest_passphrase:
+        # Digest exists but no way to verify
+        raise ValueError("Encrypted message contains a digest, but no digest passphrase was provided.")
+    elif not has_digest and digest_passphrase:
+        # Passphrase was given but no digest to check
+        raise ValueError("Digest passphrase was provided, but the message contains no digest.")
+    elif not has_digest and not digest_passphrase:
+        if require_digest:
+            raise ValueError("No digest present. Digest is required for this decryption.")
+
+
+
+def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str = "") -> Dict[str, Union[List[List[int]], List[int], int, str]]:
+    """
+    Encrypt a plaintext message into coordinate-based cipher data using a grid system.
+
+    This function builds a shuffled 3D coordinate grid from a dynamically generated character set,
+    then encodes each character from the message into a coordinate in the grid. The encryption
+    process is deterministic for a given password, salt, and input, but cryptographically secure.
+
+    Args:
+        password (str): The user-provided password used to derive cryptographic keys.
+        redundancy (int): The number of times the expanded character list should be repeated in the grid.
+        message (str): The plaintext message to encrypt.
+        digest_passphrase (str): None by default, if included calculates a digest of the contents using the digest_passphrase as the key.
+
+    Returns:
+        Dict[str, Union[List[List[int]], List[int], int, str]]: A dictionary containing:
+            - "cipher_text": A list of [x, y, z] coordinates (one per character).
+            - "character_blocks": Indexes of the blocks used from the master character list.
+            - "redundancy": The redundancy factor used.
+            - "salt": The hex-encoded salt used during key generation.
+
+    Raises:
+        ValueError: If the message contains characters not in the allowed CHARACTER_SET.
+    """
+    # Generate cryptographic materials
     salt = generate_salt()
     start_time, time_increment, grid_seed = generate_key_materials(password=password, salt=salt)
     current_time = start_time
-    
-    # Verify message doesn't contain unmapped characters.
+
+    # Validate characters
     message_set = set(message)
-    if not set(message_set).issubset(CHARACTER_SET):
+    if not message_set.issubset(CHARACTER_SET):
         unmapped_characters = message_set - CHARACTER_SET
-        raise ValueError(f"Input contains unmapped charcters that cannot be encrypted: {unmapped_characters}")
+        raise ValueError(
+            f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}"
+        )
 
-    # Get Blocks
-    block_indexes = find_used_character_block_indexes(CHARACTER_BLOCKS, set(message))
+    # Determine which character blocks are needed
+    block_indexes = find_used_character_block_indexes(CHARACTER_BLOCKS, message_set)
 
-    # Build character block list
+    # Expand and prepare the character list for grid usage
     expanded_character_list = collect_chars_by_indexes(CHARACTER_BLOCKS, block_indexes)
-
-    # Determine Grid Size
     grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
-    
-    # Pad character list to fill in gaps.
-    padded_expanded_character_list = pad_character_list_to_grid(expanded_character_list=expanded_character_list, grid_size=grid_size)
+    padded_expanded_character_list = pad_character_list_to_grid(
+        expanded_character_list=expanded_character_list,
+        grid_size=grid_size
+    )
 
-    # Build list of coords
-    encrypted_output = []
-    
+    # Encrypt message as coordinate list
+    encrypted_output: List[List[int]] = []
     for character in message:
-        encrypted_output.append(get_coord_math(character=character, character_list=padded_expanded_character_list, grid_size=grid_size, grid_seed=grid_seed, time=current_time))
+        coord = get_coord_math(
+            character=character,
+            character_list=padded_expanded_character_list,
+            grid_size=grid_size,
+            grid_seed=grid_seed,
+            time=current_time
+        )
+        encrypted_output.append(coord)
         current_time += time_increment
-    
+
     json_output = {
         "cipher_text": encrypted_output,
         "character_blocks": block_indexes,
         "redundancy": redundancy,
         "salt": salt.hex()
     }
+
+    if digest_passphrase:
+        json_output["digest"] = compute_digest(json_output, digest_passphrase)
+    
     return json_output
 
-def decrypt(password:str, json_data:dict) -> str:
-    
+def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
+    """
+    Decrypt a coordinate-based cipher back into the original plaintext message.
+
+    This function reconstructs the same character grid used during encryption
+    based on the provided password and metadata in `json_data`. It then maps
+    each coordinate back to its corresponding character in the shuffled grid.
+
+    Args:
+        password (str): The password used during encryption.
+        json_data (Dict): A dictionary containing:
+            - "salt": Hex string used for key derivation.
+            - "character_blocks": List of block indexes used.
+            - "redundancy": The redundancy factor used in grid construction.
+            - "cipher_text": List of [x, y, z] grid coordinates (encrypted characters).
+        digest_passphrase (str): The passphrase used to validate the digest.
+
+    Returns:
+        str: The original decrypted plaintext message.
+    """
+    # Digest check 
+    handle_digest_verification(json_data, digest_passphrase=digest_passphrase, require_digest=True)
+
     salt = json_data["salt"]
     character_blocks = json_data["character_blocks"]
     redundancy = json_data["redundancy"]
-    cipher_text = json_data['cipher_text']
+    cipher_text = json_data["cipher_text"]
 
-    # build keys from password
+    # Derive keys
     salt_bytes = bytes.fromhex(salt)
-    start_time, time_increment, grid_seed = generate_key_materials(password=password, salt=salt_bytes)
+    start_time, time_increment, grid_seed = generate_key_materials(
+        password=password,
+        salt=salt_bytes
+    )
     current_time = start_time
-    
-    # Build character block list
-    expanded_character_list = collect_chars_by_indexes(CHARACTER_BLOCKS, character_blocks)
-    
-    # Determine Grid Size
-    grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
-    
-    # Pad character list to fill in gaps.
-    padded_expanded_character_list = pad_character_list_to_grid(expanded_character_list=expanded_character_list, grid_size=grid_size)
-    
-    # loop through list
-    message_list = []
+
+    # Reconstruct the character list
+    expanded_character_list = collect_chars_by_indexes(
+        CHARACTER_BLOCKS, character_blocks
+    )
+
+    # Determine grid size and pad character list
+    grid_size = calculate_minimum_grid_size(
+        len(expanded_character_list), redundancy
+    )
+    padded_expanded_character_list = pad_character_list_to_grid(
+        expanded_character_list=expanded_character_list,
+        grid_size=grid_size
+    )
+
+    # Decrypt each coordinate into its corresponding character
+    message_chars: List[str] = []
     for coords in cipher_text:
-        message_list.append(get_char_math(coords=coords, character_list=padded_expanded_character_list, grid_size=grid_size,
-                      grid_seed=grid_seed, time=current_time))
+        char = get_char_math(
+            coords=coords,
+            character_list=padded_expanded_character_list,
+            grid_size=grid_size,
+            grid_seed=grid_seed,
+            time=current_time
+        )
+        message_chars.append(char)
         current_time += time_increment
-    message = "".join(message_list)
-    return message
-    
+
+    return "".join(message_chars)
+
     
 if __name__ == "__main__":
-    cipher = encrypt('test', 20, "hello there 뙱")
+    cipher = encrypt('test', 20, "hello there 뙱", 'test2')
     print(cipher)
-    message = decrypt('test', cipher)
+    message = decrypt('test', cipher, 'test2')
     print(message)
     
