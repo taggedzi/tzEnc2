@@ -1,3 +1,10 @@
 {
-    "__version__": "0.1.0"
+    "__version__": "0.1.0",
+    "argon2id": {
+        "time_cost": 4,
+        "memory_cost": 524288,
+        "parallelism": 8,
+        "bits": 256
+    },
+    "MAX_INT": 9007199254740991
 }
