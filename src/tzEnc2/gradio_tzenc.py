@@ -1,7 +1,7 @@
 import gradio as gr
 import json
 from pathlib import Path
-from tzEnc2.grid import encrypt, decrypt
+from tzEnc2.main import encrypt, decrypt
 
 
 # ---------- Encrypt ----------
