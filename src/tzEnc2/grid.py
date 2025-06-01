@@ -10,8 +10,8 @@ from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
 from argon2.low_level import hash_secret_raw, Type
-from src.tzEnc2 import CHARACTER_BLOCKS, CHARACTER_SET
-from src.tzEnc2.config import CONFIG
+from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
+from tzEnc2.config import CONFIG
 T = TypeVar("T")  # Allow generic lists of any type
 
 def generate_salt():

@@ -1,0 +1,40 @@
+# Ignore Git and Mercurial directories
+.git/
+.hg/
+
+# Ignore virtual environments
+venv/
+.env/
+.pdm/
+
+# Ignore Python build artifacts
+__pycache__/
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore test and coverage outputs
+.coverage/
+.hypothesis/
+.pytest_cache/
+htmlcov/
+reports/
+
+# Ignore log files
+*.log
+
+# Ignore IDE/editor settings
+.vscode/
+.idea/
+
+# Ignore this script itself
+scripts/tree_maker.py
+.treeignore
+
+# Ignore Old Unused Files that are kept as archive files
+archive/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

@@ -1,7 +1,7 @@
 # src/mypackage/config.py
 import json
 from pathlib import Path
-from src.tzEnc2 import CONFIG_DIR
+from tzEnc2.constants import CONFIG_DIR
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULT_CONFIG = { }

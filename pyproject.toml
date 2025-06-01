@@ -38,8 +38,10 @@ dev = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
 
 [tool.black]
 line-length = 88
@@ -69,3 +71,7 @@ addopts = "-ra -q"
 testpaths = [
     "tests"
 ]
+
+[project.scripts]
+tzenc = "tzEnc2.tzenc_cli:main"
+tzenc-web = "tzEnc2.gradio_tzenc:main"

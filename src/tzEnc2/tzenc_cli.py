@@ -2,7 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.tzEnc2.grid import encrypt, decrypt  # Replace with your actual import path
+from tzEnc2.grid import encrypt, decrypt  # Replace with your actual import path
 
 
 def parse_args():
