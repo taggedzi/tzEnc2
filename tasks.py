@@ -28,15 +28,15 @@ def clean(c):
 @task
 def lint(c):
     """Run linting tools (flake8 and black)."""
-    c.run("flake8 src/ tests/", warn=True)
-    c.run("black --check src/ tests/", warn=True)
+    c.run("flake8 src/", warn=True)
+    c.run("black --check src/", warn=True)
     print("✔ Lint checks complete.")
 
 
 @task
 def format(c):
     """Autoformat the code with black."""
-    c.run("black src/ tests/")
+    c.run("black src/")
     print("✔ Code formatted.")
 
 

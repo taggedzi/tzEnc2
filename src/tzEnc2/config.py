@@ -4,7 +4,8 @@ from pathlib import Path
 from tzEnc2.constants import CONFIG_DIR
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
-DEFAULT_CONFIG = { }
+DEFAULT_CONFIG = {}
+
 
 def load_config(file_path: Path = CONFIG_FILE) -> dict:
     """Load project config from a JSON file or return defaults."""
@@ -16,6 +17,7 @@ def load_config(file_path: Path = CONFIG_FILE) -> dict:
         except Exception as e:
             raise RuntimeError(f"Failed to load config: {e}") from e
     return DEFAULT_CONFIG
+
 
 # Optional: expose a singleton config object
 CONFIG = load_config()

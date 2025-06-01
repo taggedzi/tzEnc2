@@ -1,4 +1,3 @@
-
 import math
 import secrets
 import struct
@@ -12,7 +11,9 @@ from Crypto.Util import Counter
 from argon2.low_level import hash_secret_raw, Type
 from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
 from tzEnc2.config import CONFIG
+
 T = TypeVar("T")  # Allow generic lists of any type
+
 
 def generate_salt():
     """Generate a cryptographic salt."""
@@ -26,7 +27,7 @@ def generate_multiple_keys(
     memory_cost: int,
     time_cost: int,
     parallelism: int,
-    key_count: int
+    key_count: int,
 ):
     """Generate multiple instances of a cryptographic key from a password using argon2id
     Args:
@@ -52,12 +53,12 @@ def generate_multiple_keys(
         memory_cost=memory_cost,
         parallelism=parallelism,
         hash_len=total_bytes,
-        type=Type.ID
+        type=Type.ID,
     )
 
     keys = []
     for i in range(key_count):
-        keys.append(derived[i * c_bytes:(i + 1) * c_bytes])
+        keys.append(derived[i * c_bytes : (i + 1) * c_bytes])
     return keys
 
 
@@ -90,7 +91,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
         bits=CONFIG["argon2id"]["bits"],
         memory_cost=CONFIG["argon2id"]["memory_cost"],
         parallelism=CONFIG["argon2id"]["parallelism"],
-        key_count=3
+        key_count=3,
     )
 
     start_time = int.from_bytes(key_materials[0], byteorder="big") % 99999999
@@ -101,8 +102,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
 
 
 def find_used_character_block_indexes(
-    list_of_lists: List[List[str]],
-    message_char_set: Set[str]
+    list_of_lists: List[List[str]], message_char_set: Set[str]
 ) -> List[int]:
     """
     Find the indexes of character blocks (sublists) that contain any characters
@@ -154,13 +154,13 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
     assert aes_bits in (128, 192, 256), "AES bit length must be 128, 192, or 256"
     assert len(base_bytes) == 32, "base_bytes must be exactly 256 bits (32 bytes)"
 
-    number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, 'big')
+    number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, "big")
 
     hasher = SHA256.new()
     hasher.update(base_bytes)
     hasher.update(number_bytes)
 
-    return hasher.digest()[:aes_bits // 8]
+    return hasher.digest()[: aes_bits // 8]
 
 
 def aes_prng_stream(key: bytes, count: int) -> List[int]:
@@ -191,8 +191,8 @@ def aes_prng_stream(key: bytes, count: int) -> List[int]:
 
     random_ints: List[int] = []
     for _ in range(blocks_needed):
-        block = cipher.encrypt(b'\x00' * 16)
-        a, b = struct.unpack('>QQ', block)
+        block = cipher.encrypt(b"\x00" * 16)
+        a, b = struct.unpack(">QQ", block)
         random_ints.extend((a, b))
 
     return random_ints[:count]
@@ -271,7 +271,9 @@ def calculate_minimum_grid_size(char_list_length: int, redundancy: int) -> int:
     return grid_size
 
 
-def pad_character_list_to_grid(expanded_character_list: List[str], grid_size: int) -> List[str]:
+def pad_character_list_to_grid(
+    expanded_character_list: List[str], grid_size: int
+) -> List[str]:
     """
     Pad a list of characters by repeating it until it exactly fills a 3D cube grid.
 
@@ -289,14 +291,15 @@ def pad_character_list_to_grid(expanded_character_list: List[str], grid_size: in
     Raises:
         ValueError: If the input list is empty.
     """
-    volume = grid_size ** 3
-    repeat_count = (volume + len(expanded_character_list) - 1) // len(expanded_character_list)
+    volume = grid_size**3
+    repeat_count = (volume + len(expanded_character_list) - 1) // len(
+        expanded_character_list
+    )
 
     return (expanded_character_list * repeat_count)[:volume]
 
 
-
-def find_char_locations_in_list(in_char:str, char_list:List[str]) -> List[int]:
+def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]:
     """Find all the occurances of a character in a character list and return
     a list of all the indexes found.
 
@@ -339,14 +342,11 @@ def get_coord_math(
         ValueError: If the character does not appear in the shuffled character list.
     """
     shuffled_character_list = shuffle_list(
-        character_list=character_list,
-        seed=grid_seed,
-        time=time
+        character_list=character_list, seed=grid_seed, time=time
     )
 
     character_index_list = find_char_locations_in_list(
-        in_char=character,
-        char_list=shuffled_character_list
+        in_char=character, char_list=shuffled_character_list
     )
 
     chosen_index = secrets.choice(character_index_list)
@@ -364,7 +364,7 @@ def get_char_math(
     character_list: List[str],
     grid_size: int,
     grid_seed: bytes,
-    time: int
+    time: int,
 ) -> str:
     """
     Retrieve a character from a shuffled list based on its 3D grid coordinates.
@@ -391,21 +391,23 @@ def get_char_math(
         raise ValueError("Coordinates must be a 3-element list or tuple (x, y, z).")
 
     x, y, z = coords
-    index = x * (grid_size ** 2) + y * grid_size + z
+    index = x * (grid_size**2) + y * grid_size + z
 
     shuffled_character_list = shuffle_list(
-        character_list=character_list,
-        seed=grid_seed,
-        time=time
+        character_list=character_list, seed=grid_seed, time=time
     )
 
     if index >= len(shuffled_character_list):
-        raise IndexError(f"Grid index {index} is out of bounds for shuffled list length {len(shuffled_character_list)}.")
+        raise IndexError(
+            f"Grid index {index} is out of bounds for shuffled list length {len(shuffled_character_list)}."
+        )
 
     return shuffled_character_list[index]
 
 
-def collect_chars_by_indexes(character_blocks: List[List[str]], indexes: List[int]) -> List[str]:
+def collect_chars_by_indexes(
+    character_blocks: List[List[str]], indexes: List[int]
+) -> List[str]:
     """
     Collect and combine characters from specified block indexes.
 
@@ -425,14 +427,12 @@ def collect_chars_by_indexes(character_blocks: List[List[str]], indexes: List[in
     return [char for idx in indexes for char in character_blocks[idx]]
 
 
-
-
 def compute_digest(data: dict, digest_passphrase: str) -> str:
     """
     Compute an HMAC-SHA256 digest of the input data using the provided passphrase.
     """
-    key = digest_passphrase.encode('utf-8')
-    message = json.dumps(data, sort_keys=True).encode('utf-8')
+    key = digest_passphrase.encode("utf-8")
+    message = json.dumps(data, sort_keys=True).encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
@@ -452,9 +452,7 @@ def verify_digest(data: dict, digest_passphrase: str) -> bool:
 
 
 def handle_digest_verification(
-    json_data: dict,
-    digest_passphrase: str | None,
-    require_digest: bool = True
+    json_data: dict, digest_passphrase: str | None, require_digest: bool = True
 ) -> None:
     """
     Handles all digest validation logic before proceeding with decryption.
@@ -472,20 +470,29 @@ def handle_digest_verification(
     if has_digest and digest_passphrase:
         # Verify the digest matches
         if not verify_digest(json_data, digest_passphrase):
-            raise ValueError("Digest verification failed. Message may have been tampered with.")
+            raise ValueError(
+                "Digest verification failed. Message may have been tampered with."
+            )
     elif has_digest and not digest_passphrase:
         # Digest exists but no way to verify
-        raise ValueError("Encrypted message contains a digest, but no digest passphrase was provided.")
+        raise ValueError(
+            "Encrypted message contains a digest, but no digest passphrase was provided."
+        )
     elif not has_digest and digest_passphrase:
         # Passphrase was given but no digest to check
-        raise ValueError("Digest passphrase was provided, but the message contains no digest.")
+        raise ValueError(
+            "Digest passphrase was provided, but the message contains no digest."
+        )
     elif not has_digest and not digest_passphrase:
         if require_digest:
-            raise ValueError("No digest present. Digest is required for this decryption.")
+            raise ValueError(
+                "No digest present. Digest is required for this decryption."
+            )
 
 
-
-def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str = "") -> Dict[str, Union[List[List[int]], List[int], int, str]]:
+def encrypt(
+    password: str, redundancy: int, message: str, digest_passphrase: str = ""
+) -> Dict[str, Union[List[List[int]], List[int], int, str]]:
     """
     Encrypt a plaintext message into coordinate-based cipher data using a grid system.
 
@@ -511,7 +518,9 @@ def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str
     """
     # Generate cryptographic materials
     salt = generate_salt()
-    start_time, time_increment, grid_seed = generate_key_materials(password=password, salt=salt)
+    start_time, time_increment, grid_seed = generate_key_materials(
+        password=password, salt=salt
+    )
     current_time = start_time
 
     # Validate characters
@@ -529,8 +538,7 @@ def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str
     expanded_character_list = collect_chars_by_indexes(CHARACTER_BLOCKS, block_indexes)
     grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
     padded_expanded_character_list = pad_character_list_to_grid(
-        expanded_character_list=expanded_character_list,
-        grid_size=grid_size
+        expanded_character_list=expanded_character_list, grid_size=grid_size
     )
 
     # Encrypt message as coordinate list
@@ -541,7 +549,7 @@ def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str
             character_list=padded_expanded_character_list,
             grid_size=grid_size,
             grid_seed=grid_seed,
-            time=current_time
+            time=current_time,
         )
         encrypted_output.append(coord)
         current_time += time_increment
@@ -550,13 +558,14 @@ def encrypt(password: str, redundancy: int, message: str, digest_passphrase: str
         "cipher_text": encrypted_output,
         "character_blocks": block_indexes,
         "redundancy": redundancy,
-        "salt": salt.hex()
+        "salt": salt.hex(),
     }
 
     if digest_passphrase:
         json_output["digest"] = compute_digest(json_output, digest_passphrase)
-    
+
     return json_output
+
 
 def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     """
@@ -578,8 +587,10 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     Returns:
         str: The original decrypted plaintext message.
     """
-    # Digest check 
-    handle_digest_verification(json_data, digest_passphrase=digest_passphrase, require_digest=True)
+    # Digest check
+    handle_digest_verification(
+        json_data, digest_passphrase=digest_passphrase, require_digest=True
+    )
 
     salt = json_data["salt"]
     character_blocks = json_data["character_blocks"]
@@ -589,8 +600,7 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     # Derive keys
     salt_bytes = bytes.fromhex(salt)
     start_time, time_increment, grid_seed = generate_key_materials(
-        password=password,
-        salt=salt_bytes
+        password=password, salt=salt_bytes
     )
     current_time = start_time
 
@@ -600,12 +610,9 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     )
 
     # Determine grid size and pad character list
-    grid_size = calculate_minimum_grid_size(
-        len(expanded_character_list), redundancy
-    )
+    grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
     padded_expanded_character_list = pad_character_list_to_grid(
-        expanded_character_list=expanded_character_list,
-        grid_size=grid_size
+        expanded_character_list=expanded_character_list, grid_size=grid_size
     )
 
     # Decrypt each coordinate into its corresponding character
@@ -616,17 +623,16 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
             character_list=padded_expanded_character_list,
             grid_size=grid_size,
             grid_seed=grid_seed,
-            time=current_time
+            time=current_time,
         )
         message_chars.append(char)
         current_time += time_increment
 
     return "".join(message_chars)
 
-    
+
 if __name__ == "__main__":
-    cipher = encrypt('test', 20, "hello there 뙱", 'test2')
+    cipher = encrypt("test", 20, "hello there 뙱", "test2")
     print(cipher)
-    message = decrypt('test', cipher, 'test2')
+    message = decrypt("test", cipher, "test2")
     print(message)
-    

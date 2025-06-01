@@ -15,7 +15,7 @@ TEST_DIR = PROJECT_ROOT / "test"
 
 
 # Load Character list
-CHARACTER_BLOCK_FILE = ASSETS_DIR / 'character_chunks_256a.pkl'
+CHARACTER_BLOCK_FILE = ASSETS_DIR / "character_chunks_256a.pkl"
 CHARACTER_BLOCKS = None
 
 with open(CHARACTER_BLOCK_FILE, "rb") as f:

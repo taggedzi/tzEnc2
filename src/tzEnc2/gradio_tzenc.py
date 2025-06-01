@@ -19,7 +19,7 @@ def encrypt_handler(message, password, redundancy, digest_passphrase, input_file
             password=password,
             redundancy=redundancy,
             message=message,
-            digest_passphrase=digest_passphrase or None
+            digest_passphrase=digest_passphrase or None,
         )
         json_str = json.dumps(data, indent=2)
 
@@ -48,7 +48,7 @@ def decrypt_handler(file_obj, password, digest_passphrase):
         message = decrypt(
             password=password,
             json_data=json_data,
-            digest_passphrase=digest_passphrase or None
+            digest_passphrase=digest_passphrase or None,
         )
 
         output_path = Path("message.txt")
@@ -65,12 +65,12 @@ encrypt_inputs = [
     gr.Textbox(label="Password", type="password"),
     gr.Slider(1, 10, value=3, step=1, label="Redundancy"),
     gr.Textbox(label="Digest Passphrase (optional)", type="password"),
-    gr.File(label="Upload Message File (UTF-8 .txt)", file_types=[".txt"])
+    gr.File(label="Upload Message File (UTF-8 .txt)", file_types=[".txt"]),
 ]
 
 encrypt_outputs = [
     gr.Textbox(label="Encrypted JSON Output", lines=10),
-    gr.File(label="Download .tzenc")
+    gr.File(label="Download .tzenc"),
 ]
 
 encrypt_tab = gr.Interface(
@@ -78,19 +78,19 @@ encrypt_tab = gr.Interface(
     inputs=encrypt_inputs,
     outputs=encrypt_outputs,
     title="Encrypt a Message",
-    allow_flagging="never"
+    allow_flagging="never",
 )
 
 # ---------- Decrypt Tab ----------
 decrypt_inputs = [
     gr.File(label="Upload Encrypted File (.tzenc)", file_types=[".tzenc"]),
     gr.Textbox(label="Password", type="password"),
-    gr.Textbox(label="Digest Passphrase (optional)", type="password")
+    gr.Textbox(label="Digest Passphrase (optional)", type="password"),
 ]
 
 decrypt_outputs = [
     gr.Textbox(label="Decrypted Message", lines=10),
-    gr.File(label="Download .txt")
+    gr.File(label="Download .txt"),
 ]
 
 decrypt_tab = gr.Interface(
@@ -98,8 +98,9 @@ decrypt_tab = gr.Interface(
     inputs=decrypt_inputs,
     outputs=decrypt_outputs,
     title="Decrypt a Message",
-    allow_flagging="never"
+    allow_flagging="never",
 )
+
 
 # ---------- Run App ----------
 def main():
