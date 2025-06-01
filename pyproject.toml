@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=67.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tzEnc2"
+version = "0.1.0"
+description = "A simple encryption and decryption tool."
+readme = "README.md"
+license = { text = "COPYRIGHT" }
+requires-python = ">=3.8"
+authors = [
+    { name = "Matthew Craig", email = "taggedzi.mpc@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = [
+    # Add runtime dependencies here, e.g.:
+    # "requests>=2.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.0",
+    "flake8>=7.0",
+    "mypy>=1.8",
+    "pytest>=8.0",
+    "build>=1.0",
+    "invoke>=2.0",
+    "pre-commit>=3.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.flake8]
+max-line-length = 88
+exclude = ".venv,build,dist"
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests"
+]

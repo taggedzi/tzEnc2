@@ -1,0 +1,46 @@
+# Pull Request Template
+
+## 📋 Description
+
+Please provide a clear and concise description of the changes being proposed.
+
+---
+
+## 🧠 Summary of Changes
+
+- Branch: `<!-- insert branch name -->`
+- Related Issue(s): `<!-- insert issue number(s), e.g., #42 -->`
+- Summary: `<!-- describe what this PR addresses or resolves -->`
+
+---
+
+## ✅ PR Checklist
+
+Please verify that all items below are complete before requesting a review.
+
+- [ ] PR title is descriptive and concise
+- [ ] Description includes the **branch name** and relevant **issue(s)**
+- [ ] Code adheres to the project's coding standards and style guide
+- [ ] Code passes linting (`flake8`, `black`, or project-specific linters)
+- [ ] Changes have been reviewed (self-reviewed or peer-reviewed)
+- [ ] I am **legally authorized** to contribute this code to the project
+- [ ] No sensitive or proprietary information is included
+- [ ] Tests (if applicable) are added or updated, and pass successfully
+
+---
+
+## 🧪 Testing
+
+Please describe the testing that was done to verify this change works as intended.
+
+---
+
+## 📷 Screenshots (if applicable)
+
+Include screenshots or terminal output that help explain the change, especially for UI, CLI, or visual updates.
+
+---
+
+## 📜 Additional Notes
+
+Add any other context or information here if needed.

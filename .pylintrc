@@ -1,0 +1,58 @@
+[MASTER]
+# Specify a configuration file.
+# rcfile=
+
+# Python code to analyze
+init-hook='import sys; sys.path.append("src")'
+
+# Files or directories to be skipped
+ignore=tests
+ignore-patterns=.*_test\.py,.*_tests\.py
+
+# Python version (3.8+ is common)
+py-version=3.8
+
+# Load plugins (optional)
+load-plugins=pylint.extensions.docparams
+
+[MESSAGES CONTROL]
+# Disable specific messages
+disable=
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    R0903,  # too-few-public-methods
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    R0915,  # too-many-statements
+    W0511,  # fixme
+    W0621,  # redefined-outer-name
+    C0103,  # variable name doesn't conform to snake_case (for test cases, etc.)
+
+[REPORTS]
+# Set output format
+output-format = colorized
+score = yes
+
+[BASIC]
+# Naming conventions
+good-names=i,j,k,ex,Run,_,pk,id
+bad-names=foo,bar,baz,toto,tutu,tata
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=88
+
+# Regexp for a line that is allowed to be longer than the limit
+ignore-long-lines=^\s*(# )?<?https?://\S+>?$
+
+[DESIGN]
+# Max number of arguments for function / method
+max-args=7
+
+# Max number of attributes for a class
+max-attributes=10
+
+[LOGGING]
+# Format string style: old (%), new ({}), or f-string
+logging-format-style = new

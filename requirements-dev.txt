@@ -1,0 +1,9 @@
+black>=24.0
+flake8>=7.0
+mypy>=1.8
+pytest>=8.0
+build>=1.0
+invoke>=2.0
+pre-commit>=3.0
+setuptools>=67.0
+wheel
