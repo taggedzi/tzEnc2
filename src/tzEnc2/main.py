@@ -1,3 +1,4 @@
+# pylint: disable=logging-too-many-args
 import math
 import secrets
 import struct
@@ -111,29 +112,20 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
 def find_used_character_block_indexes(
     list_of_lists: List[List[str]], message_char_set: Set[str]
 ) -> List[int]:
-    """
-    Find the indexes of character blocks (sublists) that contain any characters
-    from the given message character set. For each matching block, remove the
-    matched characters from a copy of the set. Stops when all characters are matched
-    or the list is exhausted. The original set is not modified.
-
-    Args:
-        list_of_lists (List[List[str]]): A list of character blocks (each a list of characters).
-        message_char_set (Set[str]): A set of characters from the input message to be matched.
-
-    Returns:
-        List[int]: A list of unique indexes of blocks that contributed characters to the message.
-    """
-    remaining_chars = set(message_char_set)  # make a local copy
+    remaining_chars = set(message_char_set)
     result: List[int] = []
 
     for idx, char_list in enumerate(list_of_lists):
         if not remaining_chars:
             break
 
-        if any(char in remaining_chars for char in char_list):
+        # If this block contains any needed character, select it
+        if any(ch in remaining_chars for ch in char_list):
             result.append(idx)
-            remaining_chars.difference_update(char_list)
+            # Remove only those in remaining_chars, not the entire block
+            for ch in char_list:
+                if ch in remaining_chars:
+                    remaining_chars.remove(ch)
 
     return result
 
@@ -354,6 +346,7 @@ def get_coord_math(
     Raises:
         ValueError: If the character does not appear in the shuffled character list.
     """
+    log.info("[get_coord_math] time=%s char=%r", time, character)
     shuffled_character_list = shuffle_list(
         character_list=character_list, seed=grid_seed, time=time
     )
@@ -368,7 +361,7 @@ def get_coord_math(
     z = chosen_index % grid_size
     y = (chosen_index // grid_size) % grid_size
     x = chosen_index // (grid_size * grid_size)
-
+    log.info("[get_coord_math] time=%s char=%r → coord=%s", time, character, [x, y, z])
     return [x, y, z]
 
 
@@ -404,7 +397,7 @@ def get_char_math(
         log.error("Coordinates must be a list or tuple of 3 integers.")
         raise ValueError("Coordinates must be a list or tuple of 3 integers.")
     if not all(isinstance(i, int) and 0 <= i < grid_size for i in coords):
-        log.error(f"Coordinates must be integers within 0 and {grid_size-1}")
+        log.error("Coordinates must be integers within 0 and %s", grid_size-1)
         raise ValueError(f"Coordinates must be integers within 0 and {grid_size-1}")
 
     x, y, z = coords
@@ -565,13 +558,33 @@ def encrypt(
     message_set = set(message)
     if not message_set.issubset(CHARACTER_SET):
         unmapped_characters = message_set - CHARACTER_SET
-        log.error(f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}")
+        log.error("Input contains unmapped characters that cannot be encrypted: %s", unmapped_characters)
         raise ValueError(
             f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}"
         )
 
+    # NEW: Ensure each character actually appears in at least one block
+    all_blocks_union = set().union(*CHARACTER_BLOCKS)
+    missing_from_master = message_set - all_blocks_union
+    if missing_from_master:
+        log.error("The following char(s) are not in any block: %s", missing_from_master)
+        raise ValueError(
+            f"The following character(s) cannot be encrypted because they are not in any block: {missing_from_master}"
+        )
+
     # Determine which character blocks are needed
     block_indexes = find_used_character_block_indexes(CHARACTER_BLOCKS, message_set)
+
+    used_chars = set()
+    for idx in block_indexes:
+        used_chars.update(CHARACTER_BLOCKS[idx])
+
+    missing_after_selection = message_set - used_chars
+    if missing_after_selection:
+        log.error("Blocks chosen do not cover these message chars: %s", missing_after_selection)
+        raise ValueError(
+            f"After selecting blocks, these characters are still missing: {missing_after_selection}"
+        )
 
     # Expand and prepare the character list for grid usage
     expanded_character_list = collect_chars_by_indexes(CHARACTER_BLOCKS, block_indexes)
