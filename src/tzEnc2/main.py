@@ -103,7 +103,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
 
     start_time = int.from_bytes(key_materials[0], byteorder="big") % 99999999
     time_increment = int.from_bytes(key_materials[1], byteorder="big") % 999999
-    grid_seed = key_materials[2]
+    grid_seed = SHA256.new(key_materials[2]).digest()  # Always gives 32 bytes
 
     return (start_time, time_increment, grid_seed)
 
@@ -161,8 +161,8 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
     if aes_bits not in (128, 192, 256):
         log.error("AES bit length must be 128, 192, or 256")
         raise ValueError("AES bit length must be 128, 192, or 256")
-    if len(base_bytes) == 32:
-        log.error("base_bytes must be exactly 256 bits (32 bytes)")
+    if len(base_bytes) != 32:
+        log.error(f"base_bytes must be exactly 256 bits (32 bytes) getting: {base_bytes}")
         raise ValueError("base_bytes must be exactly 256 bits (32 bytes)")
 
     number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, "big")
@@ -191,7 +191,7 @@ def aes_prng_stream(key: bytes, count: int) -> List[int]:
     Raises:
         AssertionError: If the key is not 16 bytes long.
     """
-    if len(key) == 16:
+    if len(key) != 16:
         log.error("Key must be 16 bytes (128 bits) for AES-128")
         raise ValueError("Key must be 16 bytes (128 bits) for AES-128")
 

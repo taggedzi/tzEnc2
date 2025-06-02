@@ -92,7 +92,7 @@ def main():
             digest_passphrase=args.digest_passphrase,
         )
 
-        args.output.write_text(json.dumps(encrypted_data, indent=2), encoding="utf-8")
+        args.output.write_text(json.dumps(encrypted_data, separators=(",", ":"), indent=None), encoding="utf-8")
         print(f"[+] Encrypted message written to {args.output}")
 
     elif args.command == "decrypt":
