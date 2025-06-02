@@ -1,12 +1,25 @@
 import argparse
 import json
 from pathlib import Path
-
+from tzEnc2.log_config import set_log_level, get_logger
 from tzEnc2.main import encrypt, decrypt  # Replace with your actual import path
+log = get_logger(__name__)
 
+
+def map_verbosity_to_level(count: int) -> str:
+    if count >= 3:
+        return "DEBUG"
+    elif count == 2:
+        return "INFO"
+    elif count == 1:
+        return "WARNING"
+    else:
+        return "ERROR"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="tzEnc Encryption/Decryption CLI Tool")
+    parser.add_argument("--verbose", "-v", action="count", default=0,
+                        help="Increase verbosity level (-v, -vv, -vvv)")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Encrypt command
@@ -58,7 +71,11 @@ def parse_args():
 
 def main():
     args = parse_args()
-
+    level = map_verbosity_to_level(args.verbose)
+    set_log_level(level)
+    log.debug("Debugging enabled")
+    log.info("CLI started")
+    
     if args.command == "encrypt":
         if args.message:
             message = args.message

@@ -11,8 +11,11 @@ from Crypto.Util import Counter
 from argon2.low_level import hash_secret_raw, Type
 from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
 from tzEnc2.config import CONFIG
-
+from tzEnc2.log_config import get_logger
 T = TypeVar("T")  # Allow generic lists of any type
+
+
+log = get_logger(__name__)
 
 
 def generate_salt():
@@ -84,6 +87,10 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
             - time_increment (int): A number between 0 and 999,998
             - grid_seed (bytes): A raw byte sequence suitable for seeding PRNG/grid logic
     """
+    if not isinstance(salt, bytes) or len(salt) != 16:
+        log.error(f"Salt must be 16 bytes long. Given {len(salt)} bytes.")
+        raise ValueError("Salt must be 16 bytes long.")
+    
     key_materials = generate_multiple_keys(
         password=password,
         salt=salt,
@@ -151,8 +158,12 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
     Raises:
         AssertionError: If `base_bytes` is not 32 bytes or `aes_bits` is not one of the allowed sizes.
     """
-    assert aes_bits in (128, 192, 256), "AES bit length must be 128, 192, or 256"
-    assert len(base_bytes) == 32, "base_bytes must be exactly 256 bits (32 bytes)"
+    if aes_bits not in (128, 192, 256):
+        log.error("AES bit length must be 128, 192, or 256")
+        raise ValueError("AES bit length must be 128, 192, or 256")
+    if len(base_bytes) == 32:
+        log.error("base_bytes must be exactly 256 bits (32 bytes)")
+        raise ValueError("base_bytes must be exactly 256 bits (32 bytes)")
 
     number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, "big")
 
@@ -180,7 +191,9 @@ def aes_prng_stream(key: bytes, count: int) -> List[int]:
     Raises:
         AssertionError: If the key is not 16 bytes long.
     """
-    assert len(key) == 16, "Key must be 16 bytes (128 bits) for AES-128"
+    if len(key) == 16:
+        log.error("Key must be 16 bytes (128 bits) for AES-128")
+        raise ValueError("Key must be 16 bytes (128 bits) for AES-128")
 
     # Each AES block (16 bytes) yields two 64-bit unsigned integers
     blocks_needed = (count + 1) // 2
@@ -387,8 +400,12 @@ def get_char_math(
         IndexError: If the computed index is out of bounds.
         ValueError: If `coords` is not exactly three elements.
     """
-    if len(coords) != 3:
-        raise ValueError("Coordinates must be a 3-element list or tuple (x, y, z).")
+    if not isinstance(coords, (list, tuple)) or len(coords) != 3:
+        log.error("Coordinates must be a list or tuple of 3 integers.")
+        raise ValueError("Coordinates must be a list or tuple of 3 integers.")
+    if not all(isinstance(i, int) and 0 <= i < grid_size for i in coords):
+        log.error(f"Coordinates must be integers within 0 and {grid_size-1}")
+        raise ValueError(f"Coordinates must be integers within 0 and {grid_size-1}")
 
     x, y, z = coords
     index = x * (grid_size**2) + y * grid_size + z
@@ -442,6 +459,7 @@ def verify_digest(data: dict, digest_passphrase: str) -> bool:
     """
     provided_digest = data.get("digest")
     if not provided_digest:
+        log.error("No digest found in encrypted data.")
         raise ValueError("No digest found in encrypted data.")
 
     # Make a copy without the digest field
@@ -470,21 +488,25 @@ def handle_digest_verification(
     if has_digest and digest_passphrase:
         # Verify the digest matches
         if not verify_digest(json_data, digest_passphrase):
+            log.error("Digest verification failed. Message may have been tampered with.")
             raise ValueError(
                 "Digest verification failed. Message may have been tampered with."
             )
     elif has_digest and not digest_passphrase:
         # Digest exists but no way to verify
+        log.error("Encrypted message contains a digest, but no digest passphrase was provided.")
         raise ValueError(
             "Encrypted message contains a digest, but no digest passphrase was provided."
         )
     elif not has_digest and digest_passphrase:
         # Passphrase was given but no digest to check
+        log.error("Digest passphrase was provided, but the message contains no digest.")
         raise ValueError(
             "Digest passphrase was provided, but the message contains no digest."
         )
     elif not has_digest and not digest_passphrase:
         if require_digest:
+            log.error("No digest present. Digest is required for this decryption.")
             raise ValueError(
                 "No digest present. Digest is required for this decryption."
             )
@@ -516,6 +538,22 @@ def encrypt(
     Raises:
         ValueError: If the message contains characters not in the allowed CHARACTER_SET.
     """
+    if not isinstance(password, str) or not (3 <= len(password) <= 256):
+        log.error("Password must be a string between 3 and 256 characters.")
+        raise ValueError("Password must be a string between 3 and 256 characters.")
+
+    if not isinstance(redundancy, int) or redundancy < 1:
+        log.error("Redundancy must be a positive integer.")
+        raise ValueError("Redundancy must be a positive integer.")
+
+    if not isinstance(message, str) or not message:
+        log.error("Message must be a non-empty string.")
+        raise ValueError("Message must be a non-empty string.")
+
+    if digest_passphrase is not None and not (3 <= len(digest_passphrase) <= 256):
+        log.error("Digest passphrase, if entered, must be between 3 and 256 characters.")
+        raise ValueError("Digest passphrase, if entered, must be between 3 and 256 characters.")
+
     # Generate cryptographic materials
     salt = generate_salt()
     start_time, time_increment, grid_seed = generate_key_materials(
@@ -527,6 +565,7 @@ def encrypt(
     message_set = set(message)
     if not message_set.issubset(CHARACTER_SET):
         unmapped_characters = message_set - CHARACTER_SET
+        log.error(f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}")
         raise ValueError(
             f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}"
         )
@@ -587,6 +626,14 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     Returns:
         str: The original decrypted plaintext message.
     """
+    
+    if not isinstance(password, str) or not (3 <= len(password) <= 256):
+        log.error("Password must be a string between 3 and 256 characters.")
+        raise ValueError("Password must be a string between 3 and 256 characters.")
+    if digest_passphrase is not None and not (3 <= len(digest_passphrase) <= 256):
+        log.error("Digest passphrase, if set, must be between 3 and 256 characters.")
+        raise ValueError("Digest passphrase, if set, must be between 3 and 256 characters.")
+    
     # Digest check
     handle_digest_verification(
         json_data, digest_passphrase=digest_passphrase, require_digest=True
