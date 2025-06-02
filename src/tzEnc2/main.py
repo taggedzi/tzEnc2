@@ -1,11 +1,11 @@
-# pylint: disable=logging-too-many-args
+# pylint: disable=logging-too-many-args,line-too-long
 import math
 import secrets
 import struct
 import hmac
 import hashlib
 import json
-from typing import Union, List, Set, Tuple, TypeVar, Dict
+from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
@@ -14,7 +14,6 @@ from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
 from tzEnc2.config import CONFIG
 from tzEnc2.log_config import get_logger
 T = TypeVar("T")  # Allow generic lists of any type
-
 
 log = get_logger(__name__)
 
@@ -89,9 +88,9 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
             - grid_seed (bytes): A raw byte sequence suitable for seeding PRNG/grid logic
     """
     if not isinstance(salt, bytes) or len(salt) != 16:
-        log.error(f"Salt must be 16 bytes long. Given {len(salt)} bytes.")
+        log.error("Salt must be 16 bytes long. Given %d bytes.", len(salt))
         raise ValueError("Salt must be 16 bytes long.")
-    
+
     key_materials = generate_multiple_keys(
         password=password,
         salt=salt,
@@ -99,7 +98,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
         bits=CONFIG["argon2id"]["bits"],
         memory_cost=CONFIG["argon2id"]["memory_cost"],
         parallelism=CONFIG["argon2id"]["parallelism"],
-        key_count=3,
+        key_count=3
     )
 
     start_time = int.from_bytes(key_materials[0], byteorder="big") % 99999999
@@ -148,13 +147,13 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
         bytes: An AES key of the specified bit length.
 
     Raises:
-        AssertionError: If `base_bytes` is not 32 bytes or `aes_bits` is not one of the allowed sizes.
+        ValueError: If `base_bytes` is not 32 bytes or `aes_bits` is not one of the allowed sizes.
     """
     if aes_bits not in (128, 192, 256):
         log.error("AES bit length must be 128, 192, or 256")
         raise ValueError("AES bit length must be 128, 192, or 256")
     if len(base_bytes) != 32:
-        log.error(f"base_bytes must be exactly 256 bits (32 bytes) getting: {base_bytes}")
+        log.error("base_bytes must be exactly 256 bits (32 bytes) given: %d", base_bytes)
         raise ValueError("base_bytes must be exactly 256 bits (32 bytes)")
 
     number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, "big")
@@ -181,7 +180,7 @@ def aes_prng_stream(key: bytes, count: int) -> List[int]:
         List[int]: A list of `count` unsigned 64-bit integers.
 
     Raises:
-        AssertionError: If the key is not 16 bytes long.
+        ValueError: If the key is not 16 bytes long.
     """
     if len(key) != 16:
         log.error("Key must be 16 bytes (128 bits) for AES-128")
@@ -463,7 +462,7 @@ def verify_digest(data: dict, digest_passphrase: str) -> bool:
 
 
 def handle_digest_verification(
-    json_data: dict, digest_passphrase: str | None, require_digest: bool = True
+    json_data: dict, digest_passphrase: Optional[str], require_digest: bool = True
 ) -> None:
     """
     Handles all digest validation logic before proceeding with decryption.
@@ -531,7 +530,7 @@ def encrypt(
     Raises:
         ValueError: If the message contains characters not in the allowed CHARACTER_SET.
     """
-    if not isinstance(password, str) or not (3 <= len(password) <= 256):
+    if not isinstance(password, str) or not 3 <= len(password) <= 256:
         log.error("Password must be a string between 3 and 256 characters.")
         raise ValueError("Password must be a string between 3 and 256 characters.")
 
@@ -543,7 +542,7 @@ def encrypt(
         log.error("Message must be a non-empty string.")
         raise ValueError("Message must be a non-empty string.")
 
-    if digest_passphrase is not None and not (3 <= len(digest_passphrase) <= 256):
+    if digest_passphrase is not None and not 3 <= len(digest_passphrase) <= 256:
         log.error("Digest passphrase, if entered, must be between 3 and 256 characters.")
         raise ValueError("Digest passphrase, if entered, must be between 3 and 256 characters.")
 
@@ -639,14 +638,13 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     Returns:
         str: The original decrypted plaintext message.
     """
-    
-    if not isinstance(password, str) or not (3 <= len(password) <= 256):
+    if not isinstance(password, str) or not 3 <= len(password) <= 256:
         log.error("Password must be a string between 3 and 256 characters.")
         raise ValueError("Password must be a string between 3 and 256 characters.")
-    if digest_passphrase is not None and not (3 <= len(digest_passphrase) <= 256):
+    if digest_passphrase is not None and not 3 <= len(digest_passphrase) <= 256:
         log.error("Digest passphrase, if set, must be between 3 and 256 characters.")
         raise ValueError("Digest passphrase, if set, must be between 3 and 256 characters.")
-    
+
     # Digest check
     handle_digest_verification(
         json_data, digest_passphrase=digest_passphrase, require_digest=True

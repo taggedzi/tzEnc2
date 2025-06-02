@@ -6,5 +6,8 @@
         "parallelism": 8,
         "bits": 256
     },
-    "MAX_INT": 9007199254740991
+    "MAX_INT": 9007199254740991,
+    "parallel": {
+        "cpu_percent": 0.75
+    }
 }
