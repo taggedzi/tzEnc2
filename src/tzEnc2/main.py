@@ -511,6 +511,11 @@ def handle_digest_verification(
             )
 
 @FunctionProfiler.track()
+def _unpack_get_coord(arg_tuple):
+    return get_coord_math(*arg_tuple)
+
+
+@FunctionProfiler.track()
 def encrypt(
     password: str, redundancy: int, message: str, digest_passphrase: str = ""
 ) -> Dict[str, Union[List[List[int]], List[int], int, str]]:
@@ -558,7 +563,6 @@ def encrypt(
     start_time, time_increment, grid_seed = generate_key_materials(
         password=password, salt=salt
     )
-    current_time = start_time
 
     # Validate characters
     message_set = set(message)
@@ -606,29 +610,57 @@ def encrypt(
     print(len(tasks))
 
 
-    ##### BEST YET
-    encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    max_workers = max(1, math.ceil(int(os.cpu_count() * 0.75)))
-    batch_size = max(1, max_workers - 2)
-    task_iter = iter(tasks)
-    st = time.perf_counter()
+    ### BEST YET
+    num_tasks = len(tasks)
+    encrypted_output = [None] * num_tasks
+
+    cpu_count = os.cpu_count() or 1
+    max_workers = max(1, math.ceil(cpu_count * 0.75))
+
+    # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
+    # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
+    chunksize = 1024
+
+    start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        pending = set()
-        while True:
-            for _ in range(batch_size - len(pending)):
-                try:
-                    item = next(task_iter)
-                except StopIteration:
-                    break
-                pending.add(executor.submit(get_coord_math, *item))
-            if not pending:
-                break
-            done, pending = wait(pending, return_when=FIRST_COMPLETED)
-            for fut in done:
-                idx, coords =  fut.result()       
-                encrypted_output[idx] = coords
-    et = time.perf_counter()
-    print(f"Total time: {et - st}")
+        # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
+        # The lambda unpacks our argument tuple into get_coord_math.
+        for idx, coords in executor.map(
+            _unpack_get_coord,
+            tasks,
+            chunksize=chunksize
+        ):
+            encrypted_output[idx] = coords
+    end = time.perf_counter()
+
+    print(f"Total time with executor.map + chunksize={chunksize}: {end - start:.3f}s")
+
+
+
+
+    ##### Second BEST
+    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
+    # max_workers = max(1, math.ceil(int(os.cpu_count() * 0.75)))
+    # batch_size = max(1, max_workers - 2)
+    # task_iter = iter(tasks)
+    # st = time.perf_counter()
+    # with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    #     pending = set()
+    #     while True:
+    #         for _ in range(batch_size - len(pending)):
+    #             try:
+    #                 item = next(task_iter)
+    #             except StopIteration:
+    #                 break
+    #             pending.add(executor.submit(get_coord_math, *item))
+    #         if not pending:
+    #             break
+    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
+    #         for fut in done:
+    #             idx, coords =  fut.result()       
+    #             encrypted_output[idx] = coords
+    # et = time.perf_counter()
+    # print(f"Total time: {et - st}")
 
     ###### Works but single core
     # encrypted_output = [None] * len(message)   # type: ignore[list-item]
