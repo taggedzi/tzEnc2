@@ -606,8 +606,8 @@ def encrypt(
     print(len(tasks))
 
     encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    batch_size = 10
-    max_workers = 10
+    max_workers = max(1, math.ceil(int(os.cpu_count() * 0.75)))
+    batch_size = max(1, max_workers - 2)
     task_iter = iter(tasks)
     st = time.perf_counter()
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
