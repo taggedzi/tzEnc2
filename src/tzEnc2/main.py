@@ -5,7 +5,7 @@ import struct
 import hmac
 import hashlib
 import json
-from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional
+from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional, Any
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
@@ -22,6 +22,7 @@ T = TypeVar("T")  # Allow generic lists of any type
 
 log = get_logger(__name__)
 
+PADDED_CHARACTER_LIST = None
 
 @FunctionProfiler.track()
 def generate_salt():
@@ -511,10 +512,27 @@ def handle_digest_verification(
                 "No digest present. Digest is required for this decryption."
             )
 
-@FunctionProfiler.track()
-def _unpack_get_coord(arg_tuple):
-    return get_coord_math(*arg_tuple)
+PADDED_CHARACTER_LIST: List[Any] = None
 
+
+def init_worker(padded_list: List[Any]):
+    """
+    This runs once in each child process before any map() calls. We assign
+    the module-level global here so that process_item (or get_coord_math) can
+    refer to it without pickling the whole object on every call.
+    """
+    global PADDED_CHARACTER_LIST
+    PADDED_CHARACTER_LIST = padded_list
+
+
+def _unpack_get_coord(arg_tuple: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]:
+    """
+    We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
+    PADDED_CHARACTER_LIST (set by init_worker) instead of passing it in every time.
+    """
+    i, ch, grid_size, grid_seed, t = arg_tuple
+    # Use the global PADDED_CHARACTER_LIST here, NOT a local variable:
+    return get_coord_math(i, ch, PADDED_CHARACTER_LIST, grid_size, grid_seed, t)
 
 @FunctionProfiler.track()
 def encrypt(
@@ -603,11 +621,17 @@ def encrypt(
     padded_expanded_character_list = pad_character_list_to_grid(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
+    print(len(padded_expanded_character_list))
 
-    tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
+    # tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
+    # for i, ch in enumerate(message):
+    #     t = start_time + i * time_increment
+    #     tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
+        
+    tasks: list[tuple[int, str, int, bytes, int]] = []
     for i, ch in enumerate(message):
         t = start_time + i * time_increment
-        tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
+        tasks.append((i, ch, grid_size, grid_seed, t))
 
     ### BEST YET
     num_tasks = len(tasks)
@@ -616,8 +640,10 @@ def encrypt(
     max_workers = max(1, math.ceil(cpu_count * 0.75))
     # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
     # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
-    chunksize = 1024
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    chunksize = 16
+    with ProcessPoolExecutor(max_workers=max_workers,
+                            initializer=init_worker,
+                            initargs=(padded_expanded_character_list,)) as executor:
         # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
         # The lambda unpacks our argument tuple into get_coord_math.
         for idx, coords in executor.map(
@@ -626,44 +652,6 @@ def encrypt(
             chunksize=chunksize
         ):
             encrypted_output[idx] = coords
-
-    ##### Second BEST
-    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    # max_workers = max(1, math.ceil(int(os.cpu_count() * 0.75)))
-    # batch_size = max(1, max_workers - 2)
-    # task_iter = iter(tasks)
-    # st = time.perf_counter()
-    # with ProcessPoolExecutor(max_workers=max_workers) as executor:
-    #     pending = set()
-    #     while True:
-    #         for _ in range(batch_size - len(pending)):
-    #             try:
-    #                 item = next(task_iter)
-    #             except StopIteration:
-    #                 break
-    #             pending.add(executor.submit(get_coord_math, *item))
-    #         if not pending:
-    #             break
-    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
-    #         for fut in done:
-    #             idx, coords =  fut.result()       
-    #             encrypted_output[idx] = coords
-    # et = time.perf_counter()
-    # print(f"Total time: {et - st}")
-
-    # Encrypt message as coordinate list SINGLE CORE!
-    # encrypted_output: List[List[int]] = []
-    # for character in message:
-    #     idx, coord = get_coord_math(
-    #         idx=1,
-    #         character=character,
-    #         character_list=padded_expanded_character_list,
-    #         grid_size=grid_size,
-    #         grid_seed=grid_seed,
-    #         time=current_time,
-    #     )
-    #     encrypted_output.append(coord)
-    #     current_time += time_increment
 
     json_output = {
         "cipher_text": encrypted_output,
@@ -751,7 +739,7 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     max_workers = max(1, math.ceil(cpu_count * 0.75))
     # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
     # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
-    chunksize = 1024
+    chunksize = 16
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
         # The lambda unpacks our argument tuple into get_coord_math.
