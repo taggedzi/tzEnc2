@@ -605,6 +605,8 @@ def encrypt(
         tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
     print(len(tasks))
 
+
+    ##### BEST YET
     encrypted_output = [None] * len(message)   # type: ignore[list-item]
     max_workers = max(1, math.ceil(int(os.cpu_count() * 0.75)))
     batch_size = max(1, max_workers - 2)
@@ -651,18 +653,15 @@ def encrypt(
 
     ###### Working but super slow single cpu core
     # encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    # task_iter = iter(tasks)
-    # with ProcessPoolExecutor(max_workers=None or os.cpu_count()) as executor:
-    #     pending = set()
-    #     while True:
-    #         for it in itertools.islice(task_iter, 2000):
-    #             pending.add(executor.submit(get_coord_math, *it))
-    #         if not pending:
-    #             break
-    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
-    #         for fut in done:
-    #             idx, coords =  fut.result()       
-    #             encrypted_output[idx] = coords
+    # st = time.perf_counter()
+    # with ProcessPoolExecutor(max_workers=10) as executor:
+    #    results = [executor.submit(get_coord_math, *task) for task in tasks]
+       
+    #    for f in as_completed(results):
+    #        idx, coords = f.result()
+    #        encrypted_output[idx] = coords
+    # et = time.perf_counter()
+    # print(f"Total time: {et - st}")          
 
     # Encrypt message as coordinate list
     # encrypted_output: List[List[int]] = []
