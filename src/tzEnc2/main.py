@@ -372,6 +372,7 @@ def get_coord_math(
 
 @FunctionProfiler.track()
 def get_char_math(
+    idx: int,
     coords: Union[List[int], Tuple[int, int, int]],
     character_list: List[str],
     grid_size: int,
@@ -418,7 +419,7 @@ def get_char_math(
             f"Grid index {index} is out of bounds for shuffled list length {len(shuffled_character_list)}."
         )
 
-    return shuffled_character_list[index]
+    return idx, shuffled_character_list[index]
 
 @FunctionProfiler.track()
 def collect_chars_by_indexes(
@@ -607,21 +608,15 @@ def encrypt(
     for i, ch in enumerate(message):
         t = start_time + i * time_increment
         tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
-    print(len(tasks))
-
 
     ### BEST YET
     num_tasks = len(tasks)
     encrypted_output = [None] * num_tasks
-
     cpu_count = os.cpu_count() or 1
     max_workers = max(1, math.ceil(cpu_count * 0.75))
-
     # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
     # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
     chunksize = 1024
-
-    start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
         # The lambda unpacks our argument tuple into get_coord_math.
@@ -631,12 +626,6 @@ def encrypt(
             chunksize=chunksize
         ):
             encrypted_output[idx] = coords
-    end = time.perf_counter()
-
-    print(f"Total time with executor.map + chunksize={chunksize}: {end - start:.3f}s")
-
-
-
 
     ##### Second BEST
     # encrypted_output = [None] * len(message)   # type: ignore[list-item]
@@ -662,40 +651,7 @@ def encrypt(
     # et = time.perf_counter()
     # print(f"Total time: {et - st}")
 
-    ###### Works but single core
-    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    # batch_size = 4
-    # max_workers = 1
-    # task_iter = iter(tasks)
-    # with ThreadPoolExecutor(max_workers=max_workers) as executor:
-    #     pending = set()
-    #     while True:
-    #         for _ in range(batch_size - len(pending)):
-    #             try:
-    #                 item = next(task_iter)
-    #             except StopIteration:
-    #                 break
-    #             pending.add(executor.submit(get_coord_math, *item))
-    #         if not pending:
-    #             break
-    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
-    #         for fut in done:
-    #             idx, coords =  fut.result()       
-    #             encrypted_output[idx] = coords
-
-    ###### Working but super slow single cpu core
-    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
-    # st = time.perf_counter()
-    # with ProcessPoolExecutor(max_workers=10) as executor:
-    #    results = [executor.submit(get_coord_math, *task) for task in tasks]
-       
-    #    for f in as_completed(results):
-    #        idx, coords = f.result()
-    #        encrypted_output[idx] = coords
-    # et = time.perf_counter()
-    # print(f"Total time: {et - st}")          
-
-    # Encrypt message as coordinate list
+    # Encrypt message as coordinate list SINGLE CORE!
     # encrypted_output: List[List[int]] = []
     # for character in message:
     #     idx, coord = get_coord_math(
@@ -723,6 +679,10 @@ def encrypt(
     print(FunctionProfiler.report())
 
     return json_output
+
+@FunctionProfiler.track()
+def _unpack_get_char(arg_tuple):
+    return get_char_math(*arg_tuple)
 
 @FunctionProfiler.track()
 def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
@@ -767,7 +727,6 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     start_time, time_increment, grid_seed = generate_key_materials(
         password=password, salt=salt_bytes
     )
-    current_time = start_time
 
     # Reconstruct the character list
     expanded_character_list = collect_chars_by_indexes(
@@ -779,21 +738,31 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     padded_expanded_character_list = pad_character_list_to_grid(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
+    
+    tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
+    for i, coords in enumerate(cipher_text):
+        t = start_time + i * time_increment
+        tasks.append((i, coords, padded_expanded_character_list, grid_size, grid_seed, t))
+        
+        
+    num_tasks = len(tasks)
+    message = [None] * num_tasks
+    cpu_count = os.cpu_count() or 1
+    max_workers = max(1, math.ceil(cpu_count * 0.75))
+    # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
+    # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
+    chunksize = 1024
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
+        # The lambda unpacks our argument tuple into get_coord_math.
+        for idx, char in executor.map(
+            _unpack_get_char,
+            tasks,
+            chunksize=chunksize
+        ):
+            message[idx] = char
 
-    # Decrypt each coordinate into its corresponding character
-    message_chars: List[str] = []
-    for coords in cipher_text:
-        char = get_char_math(
-            coords=coords,
-            character_list=padded_expanded_character_list,
-            grid_size=grid_size,
-            grid_seed=grid_seed,
-            time=current_time,
-        )
-        message_chars.append(char)
-        current_time += time_increment
-
-    return "".join(message_chars)
+    return "".join(message)
 
 
 if __name__ == "__main__":
