@@ -7,7 +7,7 @@ from tzEnc2.constants import LOGS_DIR
 # Constants
 LOG_FILE = LOGS_DIR / "tzenc.log"
 LOG_FORMAT = "[%(asctime)s] %(levelname)s - %(name)s - %(message)s"
-DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_LEVEL = logging.ERROR
 
 # Ensure log directory exists
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -31,7 +31,7 @@ console_handler.setFormatter(formatter)
 # Root logger configuration
 root_logger = logging.getLogger()
 root_logger.setLevel(DEFAULT_LOG_LEVEL)
-root_logger.addHandler(file_handler)
+# root_logger.addHandler(file_handler)
 root_logger.addHandler(console_handler)
 
 def set_log_level(level: str):

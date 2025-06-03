@@ -9,7 +9,7 @@ use_pty = platform.system() != "Windows"
 # ---- Config ----
 PYTHON = sys.executable
 VENV_DIR = "venv"
-SRC_DIR = "src"
+SRC_DIR = "src/tzEnc2"
 TEST_DIR = "tests"
 DIST_DIR = "dist"
 DOCS_DIR = "docs"

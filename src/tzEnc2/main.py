@@ -13,16 +13,22 @@ from argon2.low_level import hash_secret_raw, Type
 from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
 from tzEnc2.config import CONFIG
 from tzEnc2.log_config import get_logger
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, as_completed, ThreadPoolExecutor
+import os
+from tzEnc2.function_profiler import FunctionProfiler
+import itertools
+import time
 T = TypeVar("T")  # Allow generic lists of any type
 
 log = get_logger(__name__)
 
 
+@FunctionProfiler.track()
 def generate_salt():
     """Generate a cryptographic salt."""
     return secrets.token_bytes(16)  # 16 bytes = 128 bits
 
-
+@FunctionProfiler.track()
 def generate_multiple_keys(
     password: str,
     salt: bytes,
@@ -64,7 +70,7 @@ def generate_multiple_keys(
         keys.append(derived[i * c_bytes : (i + 1) * c_bytes])
     return keys
 
-
+@FunctionProfiler.track()
 def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]:
     """
     Generate deterministic key materials from a password and salt using Argon2id.
@@ -107,7 +113,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
 
     return (start_time, time_increment, grid_seed)
 
-
+@FunctionProfiler.track()
 def find_used_character_block_indexes(
     list_of_lists: List[List[str]], message_char_set: Set[str]
 ) -> List[int]:
@@ -128,7 +134,7 @@ def find_used_character_block_indexes(
 
     return result
 
-
+@FunctionProfiler.track()
 def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes:
     """
     Derive a fixed-length AES key from a 32-byte seed and an integer using SHA-256.
@@ -164,7 +170,7 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
 
     return hasher.digest()[: aes_bits // 8]
 
-
+@FunctionProfiler.track()
 def aes_prng_stream(key: bytes, count: int) -> List[int]:
     """
     Generate a stream of pseudo-random 64-bit integers using AES in CTR mode.
@@ -201,7 +207,7 @@ def aes_prng_stream(key: bytes, count: int) -> List[int]:
 
     return random_ints[:count]
 
-
+@FunctionProfiler.track()
 def aes_deterministic_shuffle(data: List[T], key: bytes) -> List[T]:
     """
     Shuffle a list deterministically using AES as a cryptographically secure PRNG.
@@ -234,7 +240,7 @@ def aes_deterministic_shuffle(data: List[T], key: bytes) -> List[T]:
 
     return shuffled
 
-
+@FunctionProfiler.track()
 def shuffle_list(character_list: List[str], seed: bytes, time: int) -> List[str]:
     """
     Cryptographically shuffle a list of characters in a deterministic way.
@@ -254,7 +260,7 @@ def shuffle_list(character_list: List[str], seed: bytes, time: int) -> List[str]
     key = derive_aes_key(seed, time)
     return aes_deterministic_shuffle(character_list, key)
 
-
+@FunctionProfiler.track()
 def calculate_minimum_grid_size(char_list_length: int, redundancy: int) -> int:
     """
     Calculate the minimum cube dimension (grid size) needed to store
@@ -274,7 +280,7 @@ def calculate_minimum_grid_size(char_list_length: int, redundancy: int) -> int:
     grid_size = math.ceil(required_chars ** (1 / 3))
     return grid_size
 
-
+@FunctionProfiler.track()
 def pad_character_list_to_grid(
     expanded_character_list: List[str], grid_size: int
 ) -> List[str]:
@@ -302,7 +308,7 @@ def pad_character_list_to_grid(
 
     return (expanded_character_list * repeat_count)[:volume]
 
-
+@FunctionProfiler.track()
 def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]:
     """Find all the occurances of a character in a character list and return
     a list of all the indexes found.
@@ -316,8 +322,9 @@ def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]
     """
     return [idx for idx, c in enumerate(char_list) if c == in_char]
 
-
+@FunctionProfiler.track()
 def get_coord_math(
+    idx: int,
     character: str,
     character_list: List[str],
     grid_size: int,
@@ -361,9 +368,9 @@ def get_coord_math(
     y = (chosen_index // grid_size) % grid_size
     x = chosen_index // (grid_size * grid_size)
     log.info("[get_coord_math] time=%s char=%r → coord=%s", time, character, [x, y, z])
-    return [x, y, z]
+    return idx, [x, y, z]
 
-
+@FunctionProfiler.track()
 def get_char_math(
     coords: Union[List[int], Tuple[int, int, int]],
     character_list: List[str],
@@ -413,7 +420,7 @@ def get_char_math(
 
     return shuffled_character_list[index]
 
-
+@FunctionProfiler.track()
 def collect_chars_by_indexes(
     character_blocks: List[List[str]], indexes: List[int]
 ) -> List[str]:
@@ -435,7 +442,7 @@ def collect_chars_by_indexes(
     """
     return [char for idx in indexes for char in character_blocks[idx]]
 
-
+@FunctionProfiler.track()
 def compute_digest(data: dict, digest_passphrase: str) -> str:
     """
     Compute an HMAC-SHA256 digest of the input data using the provided passphrase.
@@ -444,7 +451,7 @@ def compute_digest(data: dict, digest_passphrase: str) -> str:
     message = json.dumps(data, sort_keys=True).encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
-
+@FunctionProfiler.track()
 def verify_digest(data: dict, digest_passphrase: str) -> bool:
     """
     Verifies that the HMAC digest in the data matches the expected value.
@@ -460,7 +467,7 @@ def verify_digest(data: dict, digest_passphrase: str) -> bool:
     expected_digest = compute_digest(data_copy, digest_passphrase)
     return hmac.compare_digest(provided_digest, expected_digest)
 
-
+@FunctionProfiler.track()
 def handle_digest_verification(
     json_data: dict, digest_passphrase: Optional[str], require_digest: bool = True
 ) -> None:
@@ -503,7 +510,7 @@ def handle_digest_verification(
                 "No digest present. Digest is required for this decryption."
             )
 
-
+@FunctionProfiler.track()
 def encrypt(
     password: str, redundancy: int, message: str, digest_passphrase: str = ""
 ) -> Dict[str, Union[List[List[int]], List[int], int, str]]:
@@ -592,18 +599,84 @@ def encrypt(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
 
+    tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
+    for i, ch in enumerate(message):
+        t = start_time + i * time_increment
+        tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
+    print(len(tasks))
+
+    encrypted_output = [None] * len(message)   # type: ignore[list-item]
+    batch_size = 10
+    max_workers = 10
+    task_iter = iter(tasks)
+    st = time.perf_counter()
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        pending = set()
+        while True:
+            for _ in range(batch_size - len(pending)):
+                try:
+                    item = next(task_iter)
+                except StopIteration:
+                    break
+                pending.add(executor.submit(get_coord_math, *item))
+            if not pending:
+                break
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                idx, coords =  fut.result()       
+                encrypted_output[idx] = coords
+    et = time.perf_counter()
+    print(f"Total time: {et - st}")
+
+    ###### Works but single core
+    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
+    # batch_size = 4
+    # max_workers = 1
+    # task_iter = iter(tasks)
+    # with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    #     pending = set()
+    #     while True:
+    #         for _ in range(batch_size - len(pending)):
+    #             try:
+    #                 item = next(task_iter)
+    #             except StopIteration:
+    #                 break
+    #             pending.add(executor.submit(get_coord_math, *item))
+    #         if not pending:
+    #             break
+    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
+    #         for fut in done:
+    #             idx, coords =  fut.result()       
+    #             encrypted_output[idx] = coords
+
+    ###### Working but super slow single cpu core
+    # encrypted_output = [None] * len(message)   # type: ignore[list-item]
+    # task_iter = iter(tasks)
+    # with ProcessPoolExecutor(max_workers=None or os.cpu_count()) as executor:
+    #     pending = set()
+    #     while True:
+    #         for it in itertools.islice(task_iter, 2000):
+    #             pending.add(executor.submit(get_coord_math, *it))
+    #         if not pending:
+    #             break
+    #         done, pending = wait(pending, return_when=FIRST_COMPLETED)
+    #         for fut in done:
+    #             idx, coords =  fut.result()       
+    #             encrypted_output[idx] = coords
+
     # Encrypt message as coordinate list
-    encrypted_output: List[List[int]] = []
-    for character in message:
-        coord = get_coord_math(
-            character=character,
-            character_list=padded_expanded_character_list,
-            grid_size=grid_size,
-            grid_seed=grid_seed,
-            time=current_time,
-        )
-        encrypted_output.append(coord)
-        current_time += time_increment
+    # encrypted_output: List[List[int]] = []
+    # for character in message:
+    #     idx, coord = get_coord_math(
+    #         idx=1,
+    #         character=character,
+    #         character_list=padded_expanded_character_list,
+    #         grid_size=grid_size,
+    #         grid_seed=grid_seed,
+    #         time=current_time,
+    #     )
+    #     encrypted_output.append(coord)
+    #     current_time += time_increment
 
     json_output = {
         "cipher_text": encrypted_output,
@@ -615,9 +688,12 @@ def encrypt(
     if digest_passphrase:
         json_output["digest"] = compute_digest(json_output, digest_passphrase)
 
+    print("\n--- Function Profiling Summary ---")
+    print(FunctionProfiler.report())
+
     return json_output
 
-
+@FunctionProfiler.track()
 def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
     """
     Decrypt a coordinate-based cipher back into the original plaintext message.
