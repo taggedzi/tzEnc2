@@ -621,12 +621,6 @@ def encrypt(
     padded_expanded_character_list = pad_character_list_to_grid(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
-    print(len(padded_expanded_character_list))
-
-    # tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
-    # for i, ch in enumerate(message):
-    #     t = start_time + i * time_increment
-    #     tasks.append((i, ch, padded_expanded_character_list, grid_size, grid_seed, t))
         
     tasks: list[tuple[int, str, int, bytes, int]] = []
     for i, ch in enumerate(message):
