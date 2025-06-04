@@ -18,6 +18,7 @@ import os
 from tzEnc2.function_profiler import FunctionProfiler
 import itertools
 import time
+from multiprocessing import shared_memory
 T = TypeVar("T")  # Allow generic lists of any type
 
 log = get_logger(__name__)
@@ -327,7 +328,6 @@ def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]
 def get_coord_math(
     idx: int,
     character: str,
-    character_list: List[str],
     grid_size: int,
     grid_seed: bytes,
     time: int,
@@ -342,7 +342,6 @@ def get_coord_math(
 
     Args:
         character (str): The character to locate in the grid.
-        character_list (List[str]): The original list of characters before shuffling.
         grid_size (int): The length of one side of the 3D cube (grid volume = grid_size³).
         grid_seed (bytes): A 32-byte cryptographic seed used for deterministic shuffling.
         time (int): A numeric time or counter value to vary the shuffle key.
@@ -354,8 +353,9 @@ def get_coord_math(
         ValueError: If the character does not appear in the shuffled character list.
     """
     log.info("[get_coord_math] time=%s char=%r", time, character)
+    shm_list = PADDING_LIST
     shuffled_character_list = shuffle_list(
-        character_list=character_list, seed=grid_seed, time=time
+        character_list=shm_list, seed=grid_seed, time=time
     )
 
     character_index_list = find_char_locations_in_list(
@@ -512,18 +512,27 @@ def handle_digest_verification(
                 "No digest present. Digest is required for this decryption."
             )
 
-PADDED_CHARACTER_LIST: List[Any] = None
+PADDING_LIST = None  # type: list[str]
+_worker_shm: shared_memory.SharedMemory = None  # Keep the SharedMemory object alive
 
-
-def init_worker(padded_list: List[Any]):
+def init_worker_shared(shm_name: str, size: int):
     """
     This runs once in each child process before any map() calls. We assign
     the module-level global here so that process_item (or get_coord_math) can
     refer to it without pickling the whole object on every call.
     """
-    global PADDED_CHARACTER_LIST
-    PADDED_CHARACTER_LIST = padded_list
+    global PADDING_LIST, _worker_shm
 
+    # 1) Attach to existing shared memory block
+    _worker_shm = shared_memory.SharedMemory(name=shm_name)
+
+    # 2) Read bytes into a Python bytes object
+    raw = _worker_shm.buf[:size]  # memoryview of length `size`
+    decoded = bytes(raw).decode("utf-8")  # decode once
+
+    # 3) Convert the decoded string into a Python list of single‐character strings
+    #    This is exactly equivalent to “List[str]” where each element is one char.
+    PADDING_LIST = list(decoded)
 
 def _unpack_get_coord(arg_tuple: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]:
     """
@@ -532,7 +541,7 @@ def _unpack_get_coord(arg_tuple: Tuple[int, str, int, bytes, int]) -> Tuple[int,
     """
     i, ch, grid_size, grid_seed, t = arg_tuple
     # Use the global PADDED_CHARACTER_LIST here, NOT a local variable:
-    return get_coord_math(i, ch, PADDED_CHARACTER_LIST, grid_size, grid_seed, t)
+    return get_coord_math(i, ch, grid_size, grid_seed, t)
 
 @FunctionProfiler.track()
 def encrypt(
@@ -621,7 +630,13 @@ def encrypt(
     padded_expanded_character_list = pad_character_list_to_grid(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
-        
+    
+    joined_str = "".join(padded_expanded_character_list)        # single Python str of length N
+    utf8_bytes = joined_str.encode("utf-8")             # raw bytes, length  size_bytes
+    size_bytes = len(utf8_bytes)
+    shm = shared_memory.SharedMemory(create=True, size=size_bytes)
+    shm.buf[:size_bytes] = utf8_bytes
+
     tasks: list[tuple[int, str, int, bytes, int]] = []
     for i, ch in enumerate(message):
         t = start_time + i * time_increment
@@ -636,8 +651,8 @@ def encrypt(
     # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
     chunksize = 16
     with ProcessPoolExecutor(max_workers=max_workers,
-                            initializer=init_worker,
-                            initargs=(padded_expanded_character_list,)) as executor:
+                            initializer=init_worker_shared,
+                            initargs=(shm.name, size_bytes)) as executor:
         # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
         # The lambda unpacks our argument tuple into get_coord_math.
         for idx, coords in executor.map(
@@ -646,6 +661,9 @@ def encrypt(
             chunksize=chunksize
         ):
             encrypted_output[idx] = coords
+
+    shm.close()
+    shm.unlink()
 
     json_output = {
         "cipher_text": encrypted_output,
