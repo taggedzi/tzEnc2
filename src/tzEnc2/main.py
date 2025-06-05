@@ -375,11 +375,11 @@ def get_coord_math(
 def get_char_math(
     idx: int,
     coords: Union[List[int], Tuple[int, int, int]],
-    character_list: List[str],
+    # character_list: List[str],
     grid_size: int,
     grid_seed: bytes,
-    time: int,
-) -> str:
+    time: int
+) -> Tuple[int, str]:
     """
     Retrieve a character from a shuffled list based on its 3D grid coordinates.
 
@@ -388,14 +388,15 @@ def get_char_math(
     the character at that index in the shuffled list.
 
     Args:
+        idx (int): index
         coords (Union[List[int], Tuple[int, int, int]]): A 3D coordinate [x, y, z] in the grid.
-        character_list (List[str]): The original list of characters to be shuffled.
+        
         grid_size (int): The length of one side of the cube-shaped grid (volume = grid_size³).
         grid_seed (bytes): A 32-byte cryptographic seed for deterministic shuffling.
         time (int): A time or counter value used in key derivation for shuffling.
 
     Returns:
-        str: The character found at the specified grid coordinates after shuffling.
+        tuple: The character found at the specified grid coordinates after shuffling.
 
     Raises:
         IndexError: If the computed index is out of bounds.
@@ -411,8 +412,9 @@ def get_char_math(
     x, y, z = coords
     index = x * (grid_size**2) + y * grid_size + z
 
+    shm_list = PADDING_LIST
     shuffled_character_list = shuffle_list(
-        character_list=character_list, seed=grid_seed, time=time
+        character_list=shm_list, seed=grid_seed, time=time
     )
 
     if index >= len(shuffled_character_list):
@@ -630,7 +632,7 @@ def encrypt(
     padded_expanded_character_list = pad_character_list_to_grid(
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
-    
+
     joined_str = "".join(padded_expanded_character_list)        # single Python str of length N
     utf8_bytes = joined_str.encode("utf-8")             # raw bytes, length  size_bytes
     size_bytes = len(utf8_bytes)
@@ -647,23 +649,27 @@ def encrypt(
     encrypted_output = [None] * num_tasks
     cpu_count = os.cpu_count() or 1
     max_workers = max(1, math.ceil(cpu_count * 0.75))
-    # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
-    # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
-    chunksize = 16
-    with ProcessPoolExecutor(max_workers=max_workers,
-                            initializer=init_worker_shared,
-                            initargs=(shm.name, size_bytes)) as executor:
-        # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
-        # The lambda unpacks our argument tuple into get_coord_math.
-        for idx, coords in executor.map(
-            _unpack_get_coord,
-            tasks,
-            chunksize=chunksize
-        ):
-            encrypted_output[idx] = coords
+    chunksize = max(1, cpu_count)
 
-    shm.close()
-    shm.unlink()
+    print(f"[main.encrypt] max_workers: {max_workers}, chunksize: {chunksize}")
+    try:    
+        with ProcessPoolExecutor(max_workers=max_workers,
+                                initializer=init_worker_shared,
+                                initargs=(shm.name, size_bytes)) as executor:
+            # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
+            # The lambda unpacks our argument tuple into get_coord_math.
+            for idx, coords in executor.map(
+                _unpack_get_coord,
+                tasks,
+                chunksize=chunksize
+            ):
+                encrypted_output[idx] = coords
+    except Exception as e:
+        print(f"An exception has been raised: {e}")
+        raise
+    finally:
+        shm.close()
+        shm.unlink()
 
     json_output = {
         "cipher_text": encrypted_output,
@@ -680,9 +686,15 @@ def encrypt(
 
     return json_output
 
-@FunctionProfiler.track()
-def _unpack_get_char(arg_tuple):
-    return get_char_math(*arg_tuple)
+def _unpack_get_char(arg_tuple: Tuple[int, List[int], int, bytes, int]) -> Tuple[int, Any]:
+    """
+    We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
+    PADDED_CHARACTER_LIST (set by init_worker) instead of passing it in every time.
+    """
+    i, coords, grid_size, grid_seed, t = arg_tuple
+    # Use the global PADDED_CHARACTER_LIST here, NOT a local variable:
+    return get_char_math(i, coords, grid_size, grid_seed, t)
+
 
 @FunctionProfiler.track()
 def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
@@ -739,33 +751,42 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
         expanded_character_list=expanded_character_list, grid_size=grid_size
     )
     
+    joined_str = "".join(padded_expanded_character_list)        # single Python str of length N
+    utf8_bytes = joined_str.encode("utf-8")             # raw bytes, length  size_bytes
+    size_bytes = len(utf8_bytes)
+    shm = shared_memory.SharedMemory(create=True, size=size_bytes)
+    shm.buf[:size_bytes] = utf8_bytes
+
     tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
     for i, coords in enumerate(cipher_text):
         t = start_time + i * time_increment
-        tasks.append((i, coords, padded_expanded_character_list, grid_size, grid_seed, t))
-        
+        tasks.append((i, coords, grid_size, grid_seed, t))
         
     num_tasks = len(tasks)
     message = [None] * num_tasks
-    cpu_count = os.cpu_count() or 1
-    max_workers = max(1, math.ceil(cpu_count * 0.75))
-    # Decide on chunksize. If get_coord_math is extremely fast (sub-ms), you might
-    # choose a chunksize of several thousand. If it's heavier, maybe 128 or 256.
-    chunksize = 16
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
-        # The lambda unpacks our argument tuple into get_coord_math.
-        for idx, char in executor.map(
-            _unpack_get_char,
-            tasks,
-            chunksize=chunksize
-        ):
-            message[idx] = char
-
+    target_cpu = math.ceil(os.cpu_count() * 0.8)
+    target_chunks = os.cpu_count()
+    print(f"[main.decrypt] max_workers: {target_cpu}, chunksize: {target_chunks}")
+    try:
+        with ProcessPoolExecutor(max_workers=target_cpu,
+                                initializer=init_worker_shared,
+                                initargs=(shm.name, size_bytes)) as executor:
+            # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
+            # The lambda unpacks our argument tuple into get_coord_math.
+            for idx, char in executor.map(_unpack_get_char, tasks, chunksize=10):
+                message[idx] = char
+    except Exception as e:
+        print(f"An exception has been raised: {e}")
+        raise
+    finally:
+        shm.close()
+        shm.unlink()
+        
     return "".join(message)
 
 
 if __name__ == "__main__":
+    
     cipher = encrypt("test", 20, "hello there 뙱", "test2")
     print(cipher)
     message = decrypt("test", cipher, "test2")
