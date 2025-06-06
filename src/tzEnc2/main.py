@@ -1,4 +1,4 @@
-# pylint: disable=logging-too-many-args,line-too-long
+# pylint: disable=logging-too-many-args,line-too-long,global-statement
 import math
 import secrets
 import struct
@@ -345,7 +345,6 @@ def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]
     return [idx for idx, c in enumerate(char_list) if c == in_char]
 
 
-@FunctionProfiler.track()
 def get_coord_math(
     idx: int,
     character: str,
@@ -399,7 +398,6 @@ def get_coord_math(
     return idx, coord
 
 
-@FunctionProfiler.track()
 def get_char_math(
     idx: int,
     coords: Union[List[int], Tuple[int, int, int]],
@@ -541,108 +539,109 @@ def verify_digest(data: Dict, digest_passphrase: str) -> bool:
 
 @FunctionProfiler.track()
 def handle_digest_verification(
-    json_data: dict, digest_passphrase: Optional[str], require_digest: bool = True
+    json_data: Dict,
+    digest_passphrase: Optional[str],
+    require_digest: bool = True
 ) -> None:
     """
-    Handles all digest validation logic before proceeding with decryption.
+    Validate digest presence and correctness before proceeding with decryption.
 
     Args:
-        json_data (dict): The encrypted message dictionary.
-        digest_passphrase (str | None): The passphrase to verify the digest (optional).
-        require_digest (bool): Whether to enforce digest presence/validation strictly.
+        json_data (Dict): The encrypted message as a parsed JSON dictionary.
+        digest_passphrase (Optional[str]): The passphrase used to verify the digest (if any).
+        require_digest (bool): Whether to enforce the presence and validation of a digest.
 
     Raises:
-        ValueError: If digest conditions do not align with passphrase usage.
+        ValueError: If the digest check fails or expectations are mismatched.
     """
     has_digest = "digest" in json_data
+    has_passphrase = bool(digest_passphrase)
 
-    if has_digest and digest_passphrase:
-        # Verify the digest matches
+    if has_digest and has_passphrase:
         if not verify_digest(json_data, digest_passphrase):
             log.error("Digest verification failed. Message may have been tampered with.")
-            raise ValueError(
-                "Digest verification failed. Message may have been tampered with."
-            )
-    elif has_digest and not digest_passphrase:
-        # Digest exists but no way to verify
-        log.error("Encrypted message contains a digest, but no digest passphrase was provided.")
-        raise ValueError(
-            "Encrypted message contains a digest, but no digest passphrase was provided."
-        )
-    elif not has_digest and digest_passphrase:
-        # Passphrase was given but no digest to check
-        log.error("Digest passphrase was provided, but the message contains no digest.")
-        raise ValueError(
-            "Digest passphrase was provided, but the message contains no digest."
-        )
-    elif not has_digest and not digest_passphrase:
-        if require_digest:
-            log.error("No digest present. Digest is required for this decryption.")
-            raise ValueError(
-                "No digest present. Digest is required for this decryption."
-            )
+            raise ValueError("Digest verification failed. Message may have been tampered with.")
+    elif has_digest and not has_passphrase:
+        log.error("Digest present, but no passphrase provided to verify it.")
+        raise ValueError("Encrypted message contains a digest, but no digest passphrase was provided.")
+    elif not has_digest and has_passphrase:
+        log.error("Passphrase provided, but message does not contain a digest.")
+        raise ValueError("Digest passphrase was provided, but the message contains no digest.")
+    elif not has_digest and not has_passphrase and require_digest:
+        log.error("Digest required, but not present.")
+        raise ValueError("No digest present. Digest is required for this decryption.")
 
 
-def init_worker_shared(shm_name: str, size: int):
+def init_worker_shared(shm_name: str, size: int) -> None:
     """
-    This runs once in each child process before any map() calls. We assign
-    the module-level global here so that process_item (or get_coord_math) can
-    refer to it without pickling the whole object on every call.
+    Initialize shared memory in a worker process for parallel-safe read access.
+
+    This function runs once in each child process to attach to a pre-existing
+    shared memory block. It populates a global list of characters (`PADDING_LIST`)
+    by decoding and splitting the shared memory contents.
+
+    Args:
+        shm_name (str): The name of the existing shared memory block.
+        size (int): The number of bytes to read from the shared memory block.
+
+    Globals:
+        PADDING_LIST (List[str]): Global character list available to all workers.
+        _worker_shm (SharedMemory): Handle to the shared memory block.
     """
     global PADDING_LIST, _worker_shm
 
-    # 1) Attach to existing shared memory block
+    # 1. Attach to shared memory block by name
     _worker_shm = shared_memory.SharedMemory(name=shm_name)
 
-    # 2) Read bytes into a Python bytes object
-    raw = _worker_shm.buf[:size]  # memoryview of length `size`
-    decoded = bytes(raw).decode("utf-8")  # decode once
+    # 2. Extract `size` bytes and decode from UTF-8
+    memory_slice = _worker_shm.buf[:size]
+    decoded_string = memory_slice.tobytes().decode("utf-8")
 
-    # 3) Convert the decoded string into a Python list of single‐character strings
-    #    This is exactly equivalent to “List[str]” where each element is one char.
-    PADDING_LIST = list(decoded)
+    # 3. Split into a list of single-character strings
+    PADDING_LIST = list(decoded_string)
 
-def _unpack_get_coord(arg_tuple: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]:
+
+def _unpack_get_coord(args: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]:
     """
-    We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
-    PADDING_LIST (set by init_worker) instead of passing it in every time.
+    Unpack arguments and call get_coord_math without needing to pass PADDING_LIST explicitly.
+
+    This is used for multiprocessing where the global PADDING_LIST is initialized in each worker.
+    Avoids pickling large shared structures by relying on per-process setup via init_worker_shared.
+
+    Args:
+        args (Tuple): A tuple of (index, character, grid_size, grid_seed, time).
+
+    Returns:
+        Tuple[int, Any]: Output from get_coord_math, typically (index, [x, y, z]).
     """
-    i, ch, grid_size, grid_seed, t = arg_tuple
-    # Use the global PADDING_LIST here, NOT a local variable:
-    return get_coord_math(i, ch, grid_size, grid_seed, t)
+    index, character, grid_size, grid_seed, time = args
+    return get_coord_math(index, character, grid_size, grid_seed, time)
+
 
 @FunctionProfiler.track()
 def encrypt(
-    password: str, 
-    redundancy: int, 
-    message: str, 
-    digest_passphrase: str = "", 
+    password: str,
+    redundancy: int,
+    message: str,
+    digest_passphrase: str = "",
     max_workers: int = CONFIG["parallel"]["cpu_count"],
     chunksize: int = CONFIG["parallel"]["chunksize"]
 ) -> Dict[str, Union[List[List[int]], List[int], int, str]]:
     """
     Encrypt a plaintext message into coordinate-based cipher data using a grid system.
 
-    This function builds a shuffled 3D coordinate grid from a dynamically generated character set,
-    then encodes each character from the message into a coordinate in the grid. The encryption
-    process is deterministic for a given password, salt, and input, but cryptographically secure.
-
     Args:
-        password (str): The user-provided password used to derive cryptographic keys.
-        redundancy (int): The number of times the expanded character list should be repeated in the grid.
+        password (str): The user-provided password for key derivation.
+        redundancy (int): Number of times to repeat the expanded character list in the grid.
         message (str): The plaintext message to encrypt.
-        digest_passphrase (str): None by default, if included calculates a digest of the contents using the digest_passphrase as the key.
+        digest_passphrase (str): Optional passphrase to generate a digest.
+        max_workers (int): Number of parallel worker processes to use.
+        chunksize (int): Chunk size for parallel processing.
 
     Returns:
-        Dict[str, Union[List[List[int]], List[int], int, str]]: A dictionary containing:
-            - "cipher_text": A list of [x, y, z] coordinates (one per character).
-            - "character_blocks": Indexes of the blocks used from the master character list.
-            - "redundancy": The redundancy factor used.
-            - "salt": The hex-encoded salt used during key generation.
-
-    Raises:
-        ValueError: If the message contains characters not in the allowed CHARACTER_SET.
+        Dict: A JSON-serializable dictionary with cipher data and metadata.
     """
+    # --- Input validation ---
     if not isinstance(password, str) or not 3 <= len(password) <= 256:
         log.error("Password must be a string between 3 and 256 characters.")
         raise ValueError("Password must be a string between 3 and 256 characters.")
@@ -655,35 +654,27 @@ def encrypt(
         log.error("Message must be a non-empty string.")
         raise ValueError("Message must be a non-empty string.")
 
-    if digest_passphrase is not None and not 3 <= len(digest_passphrase) <= 256:
-        log.error("Digest passphrase, if entered, must be between 3 and 256 characters.")
-        raise ValueError("Digest passphrase, if entered, must be between 3 and 256 characters.")
+    if digest_passphrase and not 3 <= len(digest_passphrase) <= 256:
+        log.error("Digest passphrase must be between 3 and 256 characters.")
+        raise ValueError("Digest passphrase must be between 3 and 256 characters.")
 
-    # Generate cryptographic materials
+    # --- Key and salt generation ---
     salt = generate_salt()
-    start_time, time_increment, grid_seed = generate_key_materials(
-        password=password, salt=salt
-    )
+    start_time, time_increment, grid_seed = generate_key_materials(password, salt)
 
-    # Validate characters
+    # --- Character validation ---
     message_set = set(message)
     if not message_set.issubset(CHARACTER_SET):
-        unmapped_characters = message_set - CHARACTER_SET
-        log.error("Input contains unmapped characters that cannot be encrypted: %s", unmapped_characters)
-        raise ValueError(
-            f"Input contains unmapped characters that cannot be encrypted: {unmapped_characters}"
-        )
+        invalid_chars = message_set - CHARACTER_SET
+        log.error("Input contains unmapped characters: %s", invalid_chars)
+        raise ValueError(f"Cannot encrypt unsupported characters: {invalid_chars}")
 
-    # NEW: Ensure each character actually appears in at least one block
     all_blocks_union = set().union(*CHARACTER_BLOCKS)
     missing_from_master = message_set - all_blocks_union
     if missing_from_master:
-        log.error("The following char(s) are not in any block: %s", missing_from_master)
-        raise ValueError(
-            f"The following character(s) cannot be encrypted because they are not in any block: {missing_from_master}"
-        )
+        log.error("Characters missing from all blocks: %s", missing_from_master)
+        raise ValueError(f"Characters not in any block: {missing_from_master}")
 
-    # Determine which character blocks are needed
     block_indexes = find_used_character_block_indexes(CHARACTER_BLOCKS, message_set)
 
     used_chars = set()
@@ -692,47 +683,41 @@ def encrypt(
 
     missing_after_selection = message_set - used_chars
     if missing_after_selection:
-        log.error("Blocks chosen do not cover these message chars: %s", missing_after_selection)
-        raise ValueError(
-            f"After selecting blocks, these characters are still missing: {missing_after_selection}"
-        )
+        log.error("Selected blocks do not cover characters: %s", missing_after_selection)
+        raise ValueError(f"Missing characters after block selection: {missing_after_selection}")
 
-    # Expand and prepare the character list for grid usage
+    # --- Character grid setup ---
     expanded_character_list = collect_chars_by_indexes(CHARACTER_BLOCKS, block_indexes)
     grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
-    padded_expanded_character_list = pad_character_list_to_grid(
-        expanded_character_list=expanded_character_list, grid_size=grid_size
-    )
+    padded_chars = pad_character_list_to_grid(expanded_character_list, grid_size)
 
-    joined_str = "".join(padded_expanded_character_list)        # single Python str of length N
-    utf8_bytes = joined_str.encode("utf-8")             # raw bytes, length  size_bytes
+    joined_str = "".join(padded_chars)
+    utf8_bytes = joined_str.encode("utf-8")
     size_bytes = len(utf8_bytes)
+
     shm = shared_memory.SharedMemory(create=True, size=size_bytes)
     shm.buf[:size_bytes] = utf8_bytes
 
-    tasks: list[tuple[int, str, int, bytes, int]] = []
-    for i, ch in enumerate(message):
-        t = start_time + i * time_increment
-        tasks.append((i, ch, grid_size, grid_seed, t))
+    # --- Task preparation ---
+    tasks = [
+        (i, ch, grid_size, grid_seed, start_time + i * time_increment)
+        for i, ch in enumerate(message)
+    ]
+    encrypted_output = [None] * len(tasks)
 
-    ### BEST YET
-    num_tasks = len(tasks)
-    encrypted_output = [None] * num_tasks
     max_workers = max(1, max_workers)
     chunksize = max(1, chunksize)
 
     print(f"[main.encrypt] max_workers: {max_workers}, chunksize: {chunksize}")
-    try:    
-        with ProcessPoolExecutor(max_workers=max_workers,
-                                initializer=init_worker_shared,
-                                initargs=(shm.name, size_bytes)) as executor:
-            # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
-            # The lambda unpacks our argument tuple into get_coord_math.
-            for idx, coords in executor.map(
-                _unpack_get_coord,
-                tasks,
-                chunksize=chunksize
-            ):
+
+    # --- Coordinate generation with multiprocessing ---
+    try:
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=init_worker_shared,
+            initargs=(shm.name, size_bytes)
+        ) as executor:
+            for idx, coords in executor.map(_unpack_get_coord, tasks, chunksize=chunksize):
                 encrypted_output[idx] = coords
     except Exception as e:
         print(f"An exception has been raised: {e}")
@@ -741,6 +726,7 @@ def encrypt(
         shm.close()
         shm.unlink()
 
+    # --- Result packaging ---
     json_output = {
         "cipher_text": encrypted_output,
         "character_blocks": block_indexes,
@@ -755,6 +741,7 @@ def encrypt(
     print(FunctionProfiler.report())
 
     return json_output
+
 
 def _unpack_get_char(arg_tuple: Tuple[int, List[int], int, bytes, int]) -> Tuple[int, Any]:
     """
