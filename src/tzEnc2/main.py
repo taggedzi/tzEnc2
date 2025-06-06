@@ -599,9 +599,6 @@ def init_worker_shared(shm_name: str, size: int) -> None:
     global PADDING_LIST, _worker_shm
 
     # 1. Attach to shared memory block by name
-    if _worker_shm is None:
-        log.error("_worker_shm was accessed before being initialized.")
-        raise RuntimeError("Shared memory not initialized: _worker_shm is None.")
     _worker_shm = shared_memory.SharedMemory(name=shm_name)
 
     # 2. Extract `size` bytes and decode from UTF-8
