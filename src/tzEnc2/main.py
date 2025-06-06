@@ -184,72 +184,72 @@ def derive_aes_key(
 @FunctionProfiler.track()
 def aes_prng_stream(key: bytes, count: int) -> List[int]:
     """
-    Generate a stream of pseudo-random 64-bit integers using AES in CTR mode.
-
-    This function uses AES-128 in CTR mode as a deterministic PRNG to generate
-    `count` unsigned 64-bit integers. The key must be exactly 16 bytes (128 bits).
+    Generate a stream of pseudo-random 64-bit unsigned integers using AES-128 in CTR mode.
 
     Args:
-        key (bytes): A 16-byte AES-128 key used as the seed for the PRNG.
-        count (int): The number of 64-bit integers to generate.
+        key (bytes): A 16-byte AES-128 key used as the PRNG seed.
+        count (int): Number of 64-bit integers to generate.
 
     Returns:
-        List[int]: A list of `count` unsigned 64-bit integers.
+        List[int]: List of `count` pseudo-random unsigned 64-bit integers.
+
+    Raises:
+        ValueError: If key is not 16 bytes long.
+    """
+    if len(key) != 16:
+        log.error("Invalid key length: expected 16 bytes, got %d", len(key))
+        raise ValueError("Key must be 16 bytes (128 bits) for AES-128")
+
+    # Each AES block (16 bytes) gives two 64-bit integers
+    blocks_needed = (count + 1) // 2
+
+    ctr = Counter.new(128)
+    cipher = AES.new(key, AES.MODE_CTR, counter=ctr)
+
+    prng_output = []
+    for _ in range(blocks_needed):
+        block = cipher.encrypt(b"\x00" * 16)
+        prng_output.extend(struct.unpack(">QQ", block))  # 2x 64-bit unsigned ints
+
+    return prng_output[:count]
+
+
+@FunctionProfiler.track()
+def aes_deterministic_shuffle(data: List[T], key: bytes) -> List[T]:
+    """
+    Deterministically shuffle a list using AES-128 as a cryptographic PRNG.
+
+    Uses the Fisher–Yates shuffle algorithm with a pseudo-random number stream
+    derived from AES in CTR mode. Given the same `data` and `key`, the output
+    will always be the same.
+
+    Args:
+        data (List[T]): The list to shuffle.
+        key (bytes): A 16-byte AES-128 key for deterministic randomness.
+
+    Returns:
+        List[T]: A new shuffled list with deterministic order.
 
     Raises:
         ValueError: If the key is not 16 bytes long.
     """
     if len(key) != 16:
-        log.error("Key must be 16 bytes (128 bits) for AES-128")
-        raise ValueError("Key must be 16 bytes (128 bits) for AES-128")
+        log.error("Invalid key length for deterministic shuffle: %d bytes", len(key))
+        raise ValueError("Key must be exactly 16 bytes (128 bits)")
 
-    # Each AES block (16 bytes) yields two 64-bit unsigned integers
-    blocks_needed = (count + 1) // 2
-
-    # Initialize AES in CTR mode with a 128-bit counter
-    ctr = Counter.new(128)
-    cipher = AES.new(key, AES.MODE_CTR, counter=ctr)
-
-    random_ints: List[int] = []
-    for _ in range(blocks_needed):
-        block = cipher.encrypt(b"\x00" * 16)
-        a, b = struct.unpack(">QQ", block)
-        random_ints.extend((a, b))
-
-    return random_ints[:count]
-
-@FunctionProfiler.track()
-def aes_deterministic_shuffle(data: List[T], key: bytes) -> List[T]:
-    """
-    Shuffle a list deterministically using AES as a cryptographically secure PRNG.
-
-    This uses the Fisher–Yates shuffle algorithm, seeded with a pseudo-random
-    stream derived from AES-128 in CTR mode. The same `key` and `data` will
-    always produce the same shuffled output.
-
-    Args:
-        data (List[T]): The list to be shuffled.
-        key (bytes): A 16-byte AES-128 key used to seed the PRNG.
-
-    Returns:
-        List[T]: A new list with elements from `data` in shuffled order.
-
-    Raises:
-        AssertionError: If key is not 16 bytes.
-    """
-    shuffled = data.copy()
-    n = len(shuffled)
-
+    n = len(data)
     if n < 2:
-        return shuffled  # No need to shuffle
+        return data.copy()
 
-    random_ints = aes_prng_stream(key, n - 1)
+    shuffled = data.copy()
+    prng = aes_prng_stream(key, n - 1)
 
     for i in reversed(range(1, n)):
-        j = random_ints[n - i - 1] % (i + 1)
+        j = prng[n - i - 1] % (i + 1)
         shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 
     return shuffled
+
 
 @FunctionProfiler.track()
 def shuffle_list(character_list: List[str], seed: bytes, time: int) -> List[str]:
