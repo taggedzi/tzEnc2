@@ -744,9 +744,6 @@ def encrypt(
     if digest_passphrase:
         json_output["digest"] = compute_digest(json_output, digest_passphrase)
 
-    print("\n--- Function Profiling Summary ---")
-    print(FunctionProfiler.report())
-
     return json_output
 
 
@@ -843,7 +840,7 @@ def decrypt(
     max_workers = max(1, max_workers)
     chunksize = max(1, chunksize)
 
-    print(f"[main.decrypt] max_workers: {max_workers}, chunksize: {chunksize}")
+    log.info("[main.decrypt] max_workers: %d, chunksize: %d", max_workers, chunksize)
 
     # --- Coordinate resolution via multiprocessing ---
     try:
@@ -855,8 +852,8 @@ def decrypt(
             for idx, char in executor.map(_unpack_get_char, tasks, chunksize=chunksize):
                 message[idx] = char
     except Exception as e:
-        print(f"An exception has been raised: {e}")
-        raise
+        log.error("An unexpected exception has been raised: %s", e)
+        raise Exception(f"An unexpected exception has been raised: {e}") from e  # pylint: disable=broad-exception-raised
     finally:
         shm.close()
         shm.unlink()
