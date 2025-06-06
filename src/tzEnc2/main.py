@@ -408,69 +408,74 @@ def get_char_math(
     time: int
 ) -> Tuple[int, str]:
     """
-    Retrieve a character from a shuffled list based on its 3D grid coordinates.
+    Retrieve a character from a deterministically shuffled list using 3D grid coordinates.
 
-    This function deterministically shuffles the input character list using a seed and time,
-    then converts the provided (x, y, z) grid coordinates into a linear index. It returns
-    the character at that index in the shuffled list.
+    This uses a shuffled version of PADDING_LIST, generated deterministically based on the
+    given seed and time. The function converts the provided (x, y, z) coordinates into a
+    1D index and returns the character at that position.
 
     Args:
-        idx (int): index
-        coords (Union[List[int], Tuple[int, int, int]]): A 3D coordinate [x, y, z] in the grid.
-        grid_size (int): The length of one side of the cube-shaped grid (volume = grid_size³).
-        grid_seed (bytes): A 32-byte cryptographic seed for deterministic shuffling.
-        time (int): A time or counter value used in key derivation for shuffling.
+        idx (int): An index passed through with the result.
+        coords (Union[List[int], Tuple[int, int, int]]): 3D grid coordinates [x, y, z].
+        grid_size (int): Length of one cube edge (total grid size = grid_size³).
+        grid_seed (bytes): 32-byte seed used to derive deterministic shuffle key.
+        time (int): Time or counter value to affect the shuffle.
 
     Returns:
-        tuple: The character found at the specified grid coordinates after shuffling.
+        Tuple[int, str]: A tuple of the input index and the retrieved character.
 
     Raises:
-        IndexError: If the computed index is out of bounds.
-        ValueError: If `coords` is not exactly three elements.
+        ValueError: If coordinates are invalid or out of bounds.
+        IndexError: If the computed index exceeds the list bounds.
     """
     if not isinstance(coords, (list, tuple)) or len(coords) != 3:
-        log.error("Coordinates must be a list or tuple of 3 integers.")
-        raise ValueError("Coordinates must be a list or tuple of 3 integers.")
-    if not all(isinstance(i, int) and 0 <= i < grid_size for i in coords):
-        log.error("Coordinates must be integers within 0 and %s", grid_size-1)
-        raise ValueError(f"Coordinates must be integers within 0 and {grid_size-1}")
+        log.error("Invalid coordinates: %r", coords)
+        raise ValueError("Coordinates must be a list or tuple of exactly 3 integers.")
+
+    if not all(isinstance(c, int) and 0 <= c < grid_size for c in coords):
+        log.error("Coordinates out of bounds: %r (grid_size=%d)", coords, grid_size)
+        raise ValueError(f"Coordinates must be integers in the range 0 to {grid_size - 1}.")
 
     x, y, z = coords
-    index = x * (grid_size**2) + y * grid_size + z
+    index = x * (grid_size ** 2) + y * grid_size + z
 
-    shm_list = PADDING_LIST
-    shuffled_character_list = shuffle_list(
-        character_list=shm_list, seed=grid_seed, time=time
-    )
+    shuffled_list = shuffle_list(PADDING_LIST, seed=grid_seed, time=time)
 
-    if index >= len(shuffled_character_list):
+    if index >= len(shuffled_list):
+        log.error("Computed index %d out of bounds (len=%d)", index, len(shuffled_list))
         raise IndexError(
-            f"Grid index {index} is out of bounds for shuffled list length {len(shuffled_character_list)}."
+            f"Grid index {index} is out of bounds for shuffled list length {len(shuffled_list)}."
         )
 
-    return idx, shuffled_character_list[index]
+    return idx, shuffled_list[index]
+
 
 @FunctionProfiler.track()
 def collect_chars_by_indexes(
     character_blocks: List[List[str]], indexes: List[int]
 ) -> List[str]:
     """
-    Collect and combine characters from specified block indexes.
-
-    This function takes a list of character blocks (each a list of characters)
-    and flattens the characters from the specified block indexes into a single list.
+    Collect and flatten characters from specified block indexes.
 
     Args:
-        character_blocks (List[List[str]]): A list of character lists (blocks).
-        indexes (List[int]): A list of indexes pointing to the blocks to extract.
+        character_blocks (List[List[str]]): A list of character blocks (each a list of characters).
+        indexes (List[int]): Indexes of the blocks to extract and flatten.
 
     Returns:
-        List[str]: A flat list of characters collected from the specified blocks.
+        List[str]: A single flat list of characters collected from the specified blocks.
 
     Raises:
-        IndexError: If any index in `indexes` is out of bounds.
+        IndexError: If any index in `indexes` is out of range for `character_blocks`.
     """
-    return [char for idx in indexes for char in character_blocks[idx]]
+    if not character_blocks:
+        return []
+
+    max_index = len(character_blocks) - 1
+    for i in indexes:
+        if not (0 <= i <= max_index):
+            raise IndexError(f"Block index {i} out of bounds (max allowed: {max_index})")
+
+    return [char for i in indexes for char in character_blocks[i]]
 
 @FunctionProfiler.track()
 def compute_digest(data: dict, digest_passphrase: str) -> str:
