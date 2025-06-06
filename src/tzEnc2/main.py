@@ -507,20 +507,37 @@ def compute_digest(data: Dict, digest_passphrase: str) -> str:
 
 
 @FunctionProfiler.track()
-def verify_digest(data: dict, digest_passphrase: str) -> bool:
+def verify_digest(data: Dict, digest_passphrase: str) -> bool:
     """
-    Verifies that the HMAC digest in the data matches the expected value.
+    Verify that the HMAC-SHA256 digest in the data matches the expected value.
+
+    Args:
+        data (Dict): A dictionary that includes a "digest" key and signed payload.
+        digest_passphrase (str): The passphrase used to recompute the HMAC digest.
+
+    Returns:
+        bool: True if the digest is valid; False otherwise.
+
+    Raises:
+        ValueError: If the "digest" field is missing from the input data.
     """
     provided_digest = data.get("digest")
     if not provided_digest:
-        log.error("No digest found in encrypted data.")
-        raise ValueError("No digest found in encrypted data.")
+        log.error("Missing 'digest' field in input data.")
+        raise ValueError("No digest found in input data.")
 
-    # Make a copy without the digest field
-    data_copy = data.copy()
-    del data_copy["digest"]
-    expected_digest = compute_digest(data_copy, digest_passphrase)
-    return hmac.compare_digest(provided_digest, expected_digest)
+    # Compute expected digest from a copy of the data without the "digest" field
+    data_to_verify = data.copy()
+    data_to_verify.pop("digest")
+
+    expected_digest = compute_digest(data_to_verify, digest_passphrase)
+    is_valid = hmac.compare_digest(provided_digest, expected_digest)
+
+    if not is_valid:
+        log.warning("Digest verification failed.")
+
+    return is_valid
+
 
 @FunctionProfiler.track()
 def handle_digest_verification(
