@@ -626,7 +626,6 @@ def _unpack_get_coord(args: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]
     return get_coord_math(index, character, grid_size, grid_seed, time)
 
 
-@FunctionProfiler.track()
 def encrypt(
     password: str,
     redundancy: int,
@@ -716,7 +715,7 @@ def encrypt(
     max_workers = max(1, max_workers)
     chunksize = max(1, chunksize)
 
-    print(f"[main.encrypt] max_workers: {max_workers}, chunksize: {chunksize}")
+    log.info("[main.encrypt] max_workers: %d, chunksize: %d", max_workers, chunksize)
 
     # --- Coordinate generation with multiprocessing ---
     try:
@@ -728,8 +727,8 @@ def encrypt(
             for idx, coords in executor.map(_unpack_get_coord, tasks, chunksize=chunksize):
                 encrypted_output[idx] = coords
     except Exception as e:
-        print(f"An exception has been raised: {e}")
-        raise
+        log.error("An unexpected exception has been raised: %s", e)
+        raise Exception(f"An unexpected exception has been raised: {e}") from e  # pylint: disable=broad-exception-raised
     finally:
         shm.close()
         shm.unlink()
