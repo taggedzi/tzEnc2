@@ -20,7 +20,7 @@ T = TypeVar("T")  # Allow generic lists of any type
 
 log = get_logger(__name__)
 
-# Shared memory value to reduce pickle load on ProcessPoolExecutor
+# Shared memory value to reduce pickle load on ProcessPoolExecutor for large character lists.
 PADDING_LIST = None  # type: list[str]
 _worker_shm: shared_memory.SharedMemory = None  # Keep the SharedMemory object alive
 
@@ -473,18 +473,38 @@ def collect_chars_by_indexes(
     max_index = len(character_blocks) - 1
     for i in indexes:
         if not (0 <= i <= max_index):
+            log.error("Block index %d out of bounds (max allowed: %d)", i, max_index)
             raise IndexError(f"Block index {i} out of bounds (max allowed: {max_index})")
 
     return [char for i in indexes for char in character_blocks[i]]
 
+
 @FunctionProfiler.track()
-def compute_digest(data: dict, digest_passphrase: str) -> str:
+def compute_digest(data: Dict, digest_passphrase: str) -> str:
     """
-    Compute an HMAC-SHA256 digest of the input data using the provided passphrase.
+    Compute an HMAC-SHA256 digest of the given dictionary using a passphrase.
+
+    The dictionary is serialized to a canonical JSON string with sorted keys,
+    then an HMAC digest is computed using SHA-256.
+
+    Args:
+        data (Dict): The dictionary to sign.
+        digest_passphrase (str): The passphrase used as the HMAC key.
+
+    Returns:
+        str: A hexadecimal HMAC-SHA256 digest string.
     """
+    if not isinstance(data, dict):
+        log.error("Data must be a dictionary for digest computation.")
+        raise TypeError("Data must be a dictionary for digest computation.")
+    if not isinstance(digest_passphrase, str):
+        log.error("Digest passphrase must be a string.")
+        raise TypeError("Digest passphrase must be a string.")
+
     key = digest_passphrase.encode("utf-8")
-    message = json.dumps(data, sort_keys=True).encode("utf-8")
+    message = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
+
 
 @FunctionProfiler.track()
 def verify_digest(data: dict, digest_passphrase: str) -> bool:
