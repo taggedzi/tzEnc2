@@ -254,22 +254,29 @@ def aes_deterministic_shuffle(data: List[T], key: bytes) -> List[T]:
 @FunctionProfiler.track()
 def shuffle_list(character_list: List[str], seed: bytes, time: int) -> List[str]:
     """
-    Cryptographically shuffle a list of characters in a deterministic way.
+    Deterministically shuffle a list of characters using a cryptographic seed and time.
 
-    This function derives a key from the provided seed and time, then uses
-    AES-based deterministic shuffling to reorder the character list. The same
-    `seed` and `time` will always produce the same output for the same input list.
+    This function derives an AES-128 key from the given 32-byte seed and integer `time`,
+    then performs a deterministic shuffle using AES-based PRNG and Fisher–Yates.
 
     Args:
-        character_list (List[str]): The list of characters to shuffle.
-        seed (bytes): A 32-byte seed used to derive the AES key.
-        time (int): A numeric value (e.g., timestamp or counter) to vary the derived key.
+        character_list (List[str]): List of characters to shuffle.
+        seed (bytes): A 32-byte (256-bit) seed to derive the AES key.
+        time (int): Integer input (e.g., timestamp or counter) to vary the key.
 
     Returns:
         List[str]: A new list containing the shuffled characters.
+
+    Raises:
+        ValueError: If the seed is not 32 bytes.
     """
+    if len(seed) != 32:
+        log.error("Invalid seed length: expected 32 bytes, got %d", len(seed))
+        raise ValueError("Seed must be exactly 32 bytes (256 bits)")
+
     key = derive_aes_key(seed, time)
     return aes_deterministic_shuffle(character_list, key)
+
 
 @FunctionProfiler.track()
 def calculate_minimum_grid_size(char_list_length: int, redundancy: int) -> int:
@@ -291,33 +298,37 @@ def calculate_minimum_grid_size(char_list_length: int, redundancy: int) -> int:
     grid_size = math.ceil(required_chars ** (1 / 3))
     return grid_size
 
+
 @FunctionProfiler.track()
 def pad_character_list_to_grid(
     expanded_character_list: List[str], grid_size: int
 ) -> List[str]:
     """
-    Pad a list of characters by repeating it until it exactly fills a 3D cube grid.
+    Pad a list of characters by repeating it until it fills a 3D cube grid.
 
-    The grid is assumed to have dimensions (grid_size x grid_size x grid_size).
-    This function repeats the input character list as many times as needed and
-    then slices it to fill the cube volume exactly.
+    The grid has dimensions (grid_size x grid_size x grid_size), so its volume is grid_size³.
+    Characters are repeated as needed to exactly match the volume, then trimmed to fit.
 
     Args:
-        expanded_character_list (List[str]): The character list to pad.
-        grid_size (int): The size of one cube edge (i.e., the grid has volume = grid_size³).
+        expanded_character_list (List[str]): Base character list to pad.
+        grid_size (int): Length of one side of the 3D cube.
 
     Returns:
-        List[str]: A new list of characters of length exactly grid_size³.
+        List[str]: Character list of length exactly grid_size³.
 
     Raises:
         ValueError: If the input list is empty.
     """
-    volume = grid_size**3
-    repeat_count = (volume + len(expanded_character_list) - 1) // len(
-        expanded_character_list
-    )
+    if not expanded_character_list:
+        log.error("Input character list must not be empty.")
+        raise ValueError("Input character list must not be empty.")
 
-    return (expanded_character_list * repeat_count)[:volume]
+    volume = grid_size ** 3
+    needed_repeats = -(-volume // len(expanded_character_list))  # Ceiling division
+
+    padded_list = (expanded_character_list * needed_repeats)[:volume]
+    return padded_list
+
 
 @FunctionProfiler.track()
 def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]:
