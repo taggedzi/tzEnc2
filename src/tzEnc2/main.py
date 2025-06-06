@@ -5,50 +5,51 @@ import struct
 import hmac
 import hashlib
 import json
-from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional, Any
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import shared_memory
+from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional, Any, Literal
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
 from argon2.low_level import hash_secret_raw, Type
-from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET
+from tzEnc2.constants import CHARACTER_BLOCKS, CHARACTER_SET, ARGON2ID
 from tzEnc2.config import CONFIG
 from tzEnc2.log_config import get_logger
-from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED, as_completed, ThreadPoolExecutor
-import os
 from tzEnc2.function_profiler import FunctionProfiler
-import itertools
-import time
-from multiprocessing import shared_memory
 T = TypeVar("T")  # Allow generic lists of any type
 
 log = get_logger(__name__)
 
-PADDED_CHARACTER_LIST = None
+# Shared memory value to reduce pickle load on ProcessPoolExecutor
+PADDING_LIST = None  # type: list[str]
+_worker_shm: shared_memory.SharedMemory = None  # Keep the SharedMemory object alive
+
 
 @FunctionProfiler.track()
 def generate_salt():
     """Generate a cryptographic salt."""
     return secrets.token_bytes(16)  # 16 bytes = 128 bits
 
+
 @FunctionProfiler.track()
 def generate_multiple_keys(
     password: str,
     salt: bytes,
     bits: int,
-    memory_cost: int,
-    time_cost: int,
-    parallelism: int,
     key_count: int,
+    time_cost: int = ARGON2ID["TIME_COST"],
+    memory_cost: int = ARGON2ID["MEMORY_COST"],
+    parallelism: int = ARGON2ID["PARALLELLISM"],
 ):
     """Generate multiple instances of a cryptographic key from a password using argon2id
     Args:
         password (str): The password to derive the key from.
         salt (bytes): The salt used in the argon2id algorithm.
         bits (int): The number of bits to derive from the password.
-        memory_cost (int): The amount of memory to use in the argon2id algorithm.
-        time_cost (int): The amount of time to use in the argon2id algorithm.
-        parallelism (int): The number of threads to use in the argon2id algorithm.
         key_count (int): The number of keys to generate
+        time_cost (int): The amount of time to use in the argon2id algorithm.
+        memory_cost (int): The amount of memory to use in the argon2id algorithm.
+        parallelism (int): The number of threads to use in the argon2id algorithm.
 
     Returns:
         list[bytes]: A list of cryptographic keys derived from the password.
@@ -83,7 +84,7 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
     3. A raw grid seed (bytes)
 
     These are derived using the Argon2id KDF via `generate_multiple_keys` with parameters
-    pulled from the global CONFIG.
+    pulled from the constants.py file.
 
     Args:
         password (str): The user-provided password.
@@ -91,8 +92,8 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
 
     Returns:
         Tuple[int, int, bytes]: A tuple containing:
-            - start_time (int): A number between 0 and 99,999,998
-            - time_increment (int): A number between 0 and 999,998
+            - start_time (int): A number between 0 and 99,999,999
+            - time_increment (int): A number between 0 and 99,999
             - grid_seed (bytes): A raw byte sequence suitable for seeding PRNG/grid logic
     """
     if not isinstance(salt, bytes) or len(salt) != 16:
@@ -102,67 +103,73 @@ def generate_key_materials(password: str, salt: bytes) -> Tuple[int, int, bytes]
     key_materials = generate_multiple_keys(
         password=password,
         salt=salt,
-        time_cost=CONFIG["argon2id"]["time_cost"],
-        bits=CONFIG["argon2id"]["bits"],
-        memory_cost=CONFIG["argon2id"]["memory_cost"],
-        parallelism=CONFIG["argon2id"]["parallelism"],
+        bits=ARGON2ID["BITS"],
         key_count=3
     )
 
     start_time = int.from_bytes(key_materials[0], byteorder="big") % 99999999
-    time_increment = int.from_bytes(key_materials[1], byteorder="big") % 999999
+    time_increment = int.from_bytes(key_materials[1], byteorder="big") % 99999
     grid_seed = SHA256.new(key_materials[2]).digest()  # Always gives 32 bytes
 
     return (start_time, time_increment, grid_seed)
+
 
 @FunctionProfiler.track()
 def find_used_character_block_indexes(
     list_of_lists: List[List[str]], message_char_set: Set[str]
 ) -> List[int]:
-    remaining_chars = set(message_char_set)
-    result: List[int] = []
+    """
+    Find the indexes of character blocks that contain characters from the message_char_set.
 
-    for idx, char_list in enumerate(list_of_lists):
+    Args:
+        list_of_lists: A list of character lists (blocks).
+        message_char_set: A set of characters that need to be matched.
+
+    Returns:
+        A list of indexes for blocks that contain at least one required character.
+    """
+    remaining_chars = set(message_char_set)
+    used_indexes = []
+
+    for idx, block in enumerate(list_of_lists):
         if not remaining_chars:
             break
 
-        # If this block contains any needed character, select it
-        if any(ch in remaining_chars for ch in char_list):
-            result.append(idx)
-            # Remove only those in remaining_chars, not the entire block
-            for ch in char_list:
-                if ch in remaining_chars:
-                    remaining_chars.remove(ch)
+        matching_chars = remaining_chars.intersection(block)
+        if matching_chars:
+            used_indexes.append(idx)
+            remaining_chars.difference_update(matching_chars)
 
-    return result
+    return used_indexes
+
 
 @FunctionProfiler.track()
-def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes:
+def derive_aes_key(
+    base_bytes: bytes, 
+    number: int, 
+    aes_bits: Literal[128, 192, 256] = 128
+) -> bytes:
     """
-    Derive a fixed-length AES key from a 32-byte seed and an integer using SHA-256.
-
-    This function combines a 256-bit base (seed) and an arbitrary-size integer
-    (e.g., time or counter value), then hashes them together using SHA-256 to
-    produce a secure, deterministic AES key of the specified bit size.
+    Derive a deterministic AES key from a 32-byte seed and an integer using SHA-256.
 
     Args:
-        base_bytes (bytes): A 32-byte (256-bit) base seed value.
-        number (int): An arbitrary integer to vary the derived key (e.g., time).
-        aes_bits (int, optional): The size of the output AES key in bits. Must be 128, 192, or 256.
-                                  Defaults to 128.
+        base_bytes (bytes): A 32-byte (256-bit) seed value.
+        number (int): An integer to differentiate derived keys (e.g., a counter or timestamp).
+        aes_bits (int, optional): Desired AES key length in bits (128, 192, or 256). Defaults to 128.
 
     Returns:
-        bytes: An AES key of the specified bit length.
+        bytes: AES key of the specified length.
 
     Raises:
-        ValueError: If `base_bytes` is not 32 bytes or `aes_bits` is not one of the allowed sizes.
+        ValueError: If `base_bytes` is not 32 bytes or `aes_bits` is not a valid AES length.
     """
-    if aes_bits not in (128, 192, 256):
-        log.error("AES bit length must be 128, 192, or 256")
-        raise ValueError("AES bit length must be 128, 192, or 256")
     if len(base_bytes) != 32:
-        log.error("base_bytes must be exactly 256 bits (32 bytes) given: %d", base_bytes)
-        raise ValueError("base_bytes must be exactly 256 bits (32 bytes)")
+        log.error("Invalid base_bytes length: expected 32 bytes, got %d", len(base_bytes))
+        raise ValueError("base_bytes must be exactly 32 bytes (256 bits)")
+
+    if aes_bits not in (128, 192, 256):
+        log.error("Invalid AES key size: %d. Must be 128, 192, or 256", aes_bits)
+        raise ValueError("aes_bits must be 128, 192, or 256")
 
     number_bytes = number.to_bytes((number.bit_length() + 7) // 8 or 1, "big")
 
@@ -170,7 +177,9 @@ def derive_aes_key(base_bytes: bytes, number: int, aes_bits: int = 128) -> bytes
     hasher.update(base_bytes)
     hasher.update(number_bytes)
 
-    return hasher.digest()[: aes_bits // 8]
+    key_bytes = aes_bits // 8
+    return hasher.digest()[:key_bytes]
+
 
 @FunctionProfiler.track()
 def aes_prng_stream(key: bytes, count: int) -> List[int]:
@@ -514,8 +523,6 @@ def handle_digest_verification(
                 "No digest present. Digest is required for this decryption."
             )
 
-PADDING_LIST = None  # type: list[str]
-_worker_shm: shared_memory.SharedMemory = None  # Keep the SharedMemory object alive
 
 def init_worker_shared(shm_name: str, size: int):
     """
@@ -539,15 +546,20 @@ def init_worker_shared(shm_name: str, size: int):
 def _unpack_get_coord(arg_tuple: Tuple[int, str, int, bytes, int]) -> Tuple[int, Any]:
     """
     We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
-    PADDED_CHARACTER_LIST (set by init_worker) instead of passing it in every time.
+    PADDING_LIST (set by init_worker) instead of passing it in every time.
     """
     i, ch, grid_size, grid_seed, t = arg_tuple
-    # Use the global PADDED_CHARACTER_LIST here, NOT a local variable:
+    # Use the global PADDING_LIST here, NOT a local variable:
     return get_coord_math(i, ch, grid_size, grid_seed, t)
 
 @FunctionProfiler.track()
 def encrypt(
-    password: str, redundancy: int, message: str, digest_passphrase: str = ""
+    password: str, 
+    redundancy: int, 
+    message: str, 
+    digest_passphrase: str = "", 
+    max_workers: int = CONFIG["parallel"]["cpu_count"],
+    chunksize: int = CONFIG["parallel"]["chunksize"]
 ) -> Dict[str, Union[List[List[int]], List[int], int, str]]:
     """
     Encrypt a plaintext message into coordinate-based cipher data using a grid system.
@@ -647,9 +659,8 @@ def encrypt(
     ### BEST YET
     num_tasks = len(tasks)
     encrypted_output = [None] * num_tasks
-    cpu_count = os.cpu_count() or 1
-    max_workers = max(1, math.ceil(cpu_count * 0.75))
-    chunksize = max(1, cpu_count)
+    max_workers = max(1, max_workers)
+    chunksize = max(1, chunksize)
 
     print(f"[main.encrypt] max_workers: {max_workers}, chunksize: {chunksize}")
     try:    
@@ -689,15 +700,20 @@ def encrypt(
 def _unpack_get_char(arg_tuple: Tuple[int, List[int], int, bytes, int]) -> Tuple[int, Any]:
     """
     We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
-    PADDED_CHARACTER_LIST (set by init_worker) instead of passing it in every time.
+    PADDING_LIST (set by init_worker) instead of passing it in every time.
     """
     i, coords, grid_size, grid_seed, t = arg_tuple
-    # Use the global PADDED_CHARACTER_LIST here, NOT a local variable:
+    # Use the global PADDING_LIST here, NOT a local variable:
     return get_char_math(i, coords, grid_size, grid_seed, t)
 
 
 @FunctionProfiler.track()
-def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
+def decrypt(
+    password: str, 
+    json_data: Dict, 
+    digest_passphrase: str = "",
+    max_workers: int = CONFIG["parallel"]["cpu_count"],
+    chunksize: int = CONFIG["parallel"]["chunksize"]) -> str:
     """
     Decrypt a coordinate-based cipher back into the original plaintext message.
 
@@ -764,11 +780,12 @@ def decrypt(password: str, json_data: Dict, digest_passphrase: str = "") -> str:
         
     num_tasks = len(tasks)
     message = [None] * num_tasks
-    target_cpu = math.ceil(os.cpu_count() * 0.8)
-    target_chunks = os.cpu_count()
-    print(f"[main.decrypt] max_workers: {target_cpu}, chunksize: {target_chunks}")
+    max_workers = max(1, max_workers)
+    chunksize = max(1, chunksize)
+    
+    print(f"[main.decrypt] max_workers: {max_workers}, chunksize: {chunksize}")
     try:
-        with ProcessPoolExecutor(max_workers=target_cpu,
+        with ProcessPoolExecutor(max_workers=max_workers,
                                 initializer=init_worker_shared,
                                 initargs=(shm.name, size_bytes)) as executor:
             # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.

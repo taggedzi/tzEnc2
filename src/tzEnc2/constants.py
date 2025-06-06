@@ -24,3 +24,13 @@ with open(CHARACTER_BLOCK_FILE, "rb") as f:
 
 # build a single big set allowed characters -> used to test for allowed chars.
 CHARACTER_SET = set().union(*CHARACTER_BLOCKS)
+
+# NOT RECOMMENDED TO CHANGE - Both sender and reciever must have same settings.
+ARGON2ID = {
+    "TIME_COST": 4,
+    "MEMORY_COST": 524288,
+    "PARALLELLISM": 8,
+    "BITS": 256
+}
+
+MAX_INT = 9007199254740991

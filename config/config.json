@@ -8,6 +8,7 @@
     },
     "MAX_INT": 9007199254740991,
     "parallel": {
-        "cpu_percent": 0.75
+        "cpu_count": 16,
+        "chunksize": 8
     }
 }
