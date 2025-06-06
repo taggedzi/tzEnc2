@@ -1,196 +1,137 @@
-# tzEnc2/benchmark.py
-
+# benchmark.py
 import os
-import math
 import time
-import random
-import string
 import matplotlib.pyplot as plt
 import pandas as pd
-from multiprocessing import shared_memory
-from concurrent.futures import ProcessPoolExecutor
 
-# --- STUBS: replace these with your real imports from tzEnc2 ---
-def collect_chars_by_indexes(blocks, indexes):
-    return list(string.ascii_uppercase * 10)
+# Import your real encrypt/decrypt and CHARACTER_SET from tzEnc2
+from tzEnc2.main import encrypt, decrypt
 
-def pad_character_list_to_grid(expanded_character_list, grid_size):
-    n = grid_size**3
-    padded = expanded_character_list[:]
-    while len(padded) < n:
-        padded.extend(expanded_character_list)
-    return padded[:n]
+# --------------- Constants ---------------
+TEMPLATE_1K_STR = """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin a placerat felis, eu laoreet arcu. Aenean commodo tincidunt dictum. Maecenas tempus porta purus, eget rutrum nunc. Nulla rutrum, quam at condimentum mattis, erat dui pretium velit, nec suscipit quam eros id nisi. Morbi sed semper purus. Integer vestibulum ipsum eget augue congue, in luctus sapien semper. Donec ultrices gravida lectus sed facilisis. Morbi tellus urna, tincidunt at dignissim quis, porta vel nisi.
 
-def calculate_minimum_grid_size(length, redundancy):
-    return math.ceil((length * redundancy) ** (1/3))
+Curabitur consectetur lectus nunc, et cursus enim fermentum a. Donec sodales pellentesque vehicula. Fusce sit amet aliquet ante. Fusce rutrum enim quam, et commodo nunc molestie nec. Nunc sed sodales ligula. Nunc vel sapien et ex placerat sodales. Sed sagittis nisl turpis, a mattis purus egestas et. Sed ac molestie nulla.
 
-def shuffle_list(character_list, seed, t):
-    random.seed(seed + t)
-    lst = character_list[:]
-    random.shuffle(lst)
-    return lst
+Phasellus ut sagittis massa. Aliquam porta congue ipsum, vel laoreet tortor tempor et. Nulla sodales odio sapien, et tristique libero cursus vehicula. Cras vitae dictum felis. In consectetur t"""
 
-def get_coord_math(idx, ch, grid_size, grid_seed, t):
-    time.sleep(0.0005)  # simulate ~0.5 ms of work
-    return idx, [0, 0, 0]
 
-def get_char_math(idx, coords, grid_size, grid_seed, t):
-    time.sleep(0.001)   # simulate ~1 ms of work
-    return idx, "A"
-
-CHARACTER_BLOCKS = []
-CHARACTER_SET = set(string.ascii_uppercase)
-
-def _unpack_get_coord(arg_tuple):
-    return get_coord_math(*arg_tuple)
-
-def _unpack_get_char(arg_tuple):
-    return get_char_math(*arg_tuple)
-# --- STUBS END ---
-
-# This must be at top level for Windows to pickle it:
-def init_worker_shared(shm_name: str, size: int):
+# Generate a 1000-character “plain text”
+def generate_plain_text(desired_length: int) -> str:
     """
-    Worker initializer for decryption: attach to shared memory and reconstruct a global
-    PADDING_LIST exactly as your real code does. Because this is top‐level, it can be pickled.
+    Build a string of exactly `desired_length` characters by repeating and trimming `template`.
+
+    Args:
+        desired_length (int): The length of the final output string.
+        template (str): The base string to repeat from (e.g. 1000 characters long).
+
+    Returns:
+        str: A string exactly `desired_length` characters long.
+    
+    Raises:
+        ValueError: If desired_length is negative or template is empty.
     """
-    global PADDING_LIST, _worker_shm
-    _worker_shm = shared_memory.SharedMemory(name=shm_name)
-    raw = _worker_shm.buf[:size]
-    decoded = bytes(raw).decode("utf-8")
-    PADDING_LIST = list(decoded)
-    # We do NOT call _worker_shm.close() here; let the child hold it until exit.
+    template = TEMPLATE_1K_STR
+    if desired_length < 0:
+        raise ValueError("desired_length must be non-negative.")
+    if not template:
+        raise ValueError("template string must not be empty.")
 
-def build_shared_padded_list(blocks, redundancy=1):
+    repeat_count = (desired_length + len(template) - 1) // len(template)
+    extended = (template * repeat_count)[:desired_length]
+    return extended
+
+# The special string (as provided by you) that forces an extremely large padded list:
+SPECIAL_STRING = (
+    "\tľȾ̾чՈ٫ݰࢋচଌঃඹ༯ၜᅤቫ፻ᒈᖈᚉឿᣠᨐ᭗ᱦᵼṼᾊ⃑⇤⋤⏤┒☒✒⠒⤒⨒⬒Ⱅⴚ⹈⽷゙ㆠ㊭㎭㒭㖭㚭㞭㢭㦭㪭㮭㲭㶭㺭㾭䂭䆭䊭䎭䒭䖭䚭䞭䢭䦭䪭䮭䲭䶭亭侭傭冭劭厭咭喭嚭垭墭妭媭宭岭嶭庭徭悭憭抭掭播断暭枭梭榭檭殭沭涭溭澭炭熭犭玭璭疭皭瞭碭禭窭箭粭維纭羭肭膭芭莭蒭薭蚭螭袭覭読训貭趭躭辭邭醭銭鎭钭閭隭鞭颭馭骭鮭鲭鶭麭龭ꂭꆭꊭꎭ꒰ꖹꛍꟴꤓꨧꭥ걱굱깱꽱끱녱뉱덱둱땱뙱띱롱륱멱뭱뱱뵱빱뽱쁱셱쉱썱쑱앱왱 읱족쥱쩱쭱챱쵱칱콱큱텱퉱퍱푱핱홱흱礪慎ﯓﳓ﷼－𐀫𐅝𐌱𐑪𐖏𐛗𐡒𐧟𐬨𐳙𐽾𑃜𑈇𑐈𑗗𑠘𑧤𑰜𑶍𒂟𒆟𒊟𒐅𒔑𓁪𓅪𓉪𓍪𔐻𔔻𔘻𖣴𖧴𖬓𖼹𗂝𗆝𗊝𗎝𗒝𗖝𗚝𗞝𗢝𗦝𗪝𗮝𗲝𗶝𗺝𗾝𘂝𘆝𘊝𘎝𘒝𘖝𘚝𘞝𘢥𘦥𘪥𘮥𘲥𛂹𛇿𛰃𜽿𝂻𝇏𝐚𝔫𝘲𝜴𝠶𝤶𝨶𞊚𞢔𞴤🁛"
+)
+
+# --------------- Benchmark Logic ---------------
+
+def benchmark_case(case_name: str, message: str, password: str = "benchmark"):
     """
-    Build a “padded list” in shared memory in the same way your application does,
-    then return (SharedMemory object, size_in_bytes, grid_size).
+    For the given message, loop over workers=1..cpu_count and chunksize=1,2,4,..,1024.
+    Measure encryption and decryption times using the real functions.
+    Returns a list of dicts with (case, workers, chunksize, time_enc, time_dec).
     """
-    expanded = collect_chars_by_indexes(blocks, [])
-    grid_size = calculate_minimum_grid_size(len(expanded), redundancy)
-    padded = pad_character_list_to_grid(expanded, grid_size)
-    joined = "".join(padded)
-    utf8_bytes = joined.encode("utf-8")
-    shm = shared_memory.SharedMemory(create=True, size=len(utf8_bytes))
-    shm.buf[: len(utf8_bytes)] = utf8_bytes
-    return shm, len(utf8_bytes), grid_size
-
-def cleanup_shm(shm):
-    shm.close()
-    shm.unlink()
-
-def benchmark_worker_function(unpack_fn, tasks, max_workers, chunksize, initializer=None, initargs=()):
-    """
-    Run a given unpack_fn (either _unpack_get_coord or _unpack_get_char) on the list of tasks
-    using ProcessPoolExecutor with `max_workers` and `chunksize`. Measures total elapsed time.
-    """
-    start = time.perf_counter()
-    with ProcessPoolExecutor(
-        max_workers=max_workers,
-        initializer=initializer,
-        initargs=initargs
-    ) as executor:
-        for _ in executor.map(unpack_fn, tasks, chunksize=chunksize):
-            pass
-    return time.perf_counter() - start
-
-def main():
-    # 1) Create a sample message of length 10k for “encryption”
-    message_length = 10000
-    sample_message = "".join(random.choices(list(CHARACTER_SET), k=message_length))
-
-    # 2) Build shared padded list for encryption/decryption
-    shm_enc, size_enc, grid_size = build_shared_padded_list(CHARACTER_BLOCKS, redundancy=1)
-    grid_seed = 12345
-    start_time = 1000
-    time_increment = 1
-
-    # 3) Build “encryption tasks” = (idx, ch, grid_size, grid_seed, t)
-    encrypt_tasks = []
-    for i, ch in enumerate(sample_message):
-        t = start_time + i * time_increment
-        encrypt_tasks.append((i, ch, grid_size, grid_seed, t))
-
-    # 4) Run single-threaded “encryption” to produce dummy ciphertext
-    cipher_text = [get_coord_math(*task)[1] for task in encrypt_tasks]
-
-    # 5) Build “decryption tasks” = (idx, coords, grid_size, grid_seed, t)
-    decrypt_tasks = []
-    for i, coords in enumerate(cipher_text):
-        t = start_time + i * time_increment
-        decrypt_tasks.append((i, coords, grid_size, grid_seed, t))
-
-    # 6) Only benchmark the first 2000 tasks of each for speed
-    enc_subset = encrypt_tasks[:2000]
-    dec_subset = decrypt_tasks[:2000]
-
-    # 7) Grid: workers 1..20, chunksize powers of two up to 1024
-    workers_list = list(range(1, 21))              # 1 through 20
-    chunksize_list = [2**i for i in range(0, 11)]   # 1,2,4,8,...,1024
+    cpu_count = os.cpu_count() or 1
+    max_workers_list = list(range(1, cpu_count + 1))
+    chunksize_list = [2**i for i in range(0, 11)]  # [1,2,4,8,...,1024]
 
     results = []
-    for worker_count in workers_list:
+    redundancy = 3
+    digest_passphrase = "test"
+
+    for workers in max_workers_list:
         for chunksize in chunksize_list:
-            # Measure encryption time (no initializer needed)
-            time_enc = benchmark_worker_function(
-                _unpack_get_coord,
-                enc_subset,
-                worker_count,
-                chunksize,
-                initializer=None,
-                initargs=()
+            # Time encryption (calls your real `encrypt` which builds the grid, etc.)
+            t0 = time.perf_counter()
+            json_data = encrypt(
+                password=password,
+                redundancy=redundancy,
+                message=message,
+                digest_passphrase=digest_passphrase,
+                max_workers=workers,
+                chunksize=chunksize
             )
-            # Measure decryption time (with init_worker_shared)
-            time_dec = benchmark_worker_function(
-                _unpack_get_char,
-                dec_subset,
-                worker_count,
-                chunksize,
-                initializer=init_worker_shared,
-                initargs=(shm_enc.name, size_enc)
+            t_enc = time.perf_counter() - t0
+
+            # Time decryption (calls your real `decrypt`)
+            t0 = time.perf_counter()
+            _ = decrypt(
+                password=password,
+                json_data=json_data,
+                digest_passphrase=digest_passphrase,
+                max_workers=workers,
+                chunksize=chunksize
             )
+            t_dec = time.perf_counter() - t0
+
             results.append({
-                'workers': worker_count,
+                'case': case_name,
+                'workers': workers,
                 'chunksize': chunksize,
-                'time_enc': time_enc,
-                'time_dec': time_dec
+                'time_enc': t_enc,
+                'time_dec': t_dec
             })
+            print(f"[{case_name}] workers={workers}, chunksize={chunksize}, enc={t_enc:.3f}s, dec={t_dec:.3f}s")
 
-    df = pd.DataFrame(results)
-    df['speed_enc'] = 2000 / df['time_enc']  # tasks per second
-    df['speed_dec'] = 2000 / df['time_dec']
+    return results
 
+def main():
+    # 1) Generate a 10 000-character "plain text" message
+    plain_10k = generate_plain_text(5000)
 
-    df.to_csv("benchmark_results.csv", index=False)
-    print("Benchmark results written to benchmark_results.csv")
+    # 2) Run benchmarks for both “plain_10k” and “special” cases
+    all_results = []
+    all_results += benchmark_case("plain_10k", plain_10k)
+    all_results += benchmark_case("special", SPECIAL_STRING)
 
-    # Plot heatmaps for encryption and decryption speeds
-    pivot_enc = df.pivot(index="workers", columns="chunksize", values="speed_enc")
-    pivot_dec = df.pivot(index="workers", columns="chunksize", values="speed_dec")
+    # 3) Convert to DataFrame, compute throughput (tasks/sec)
+    df = pd.DataFrame(all_results)
+    df['speed_enc'] = df['time_enc'].apply(lambda t: 2000 / t if t > 0 else 0)
+    df['speed_dec'] = df['time_dec'].apply(lambda t: 2000 / t if t > 0 else 0)
 
-    plt.figure(figsize=(10, 8))
-    plt.title("Encryption Speed (tasks/sec)")
-    plt.imshow(pivot_enc, aspect='auto', origin='lower', interpolation='nearest')
-    plt.colorbar(label='Tasks/sec')
-    plt.xlabel("Chunksize")
-    plt.ylabel("Workers")
-    plt.xticks(range(len(chunksize_list)), chunksize_list, rotation=45)
-    plt.yticks(range(len(workers_list)), workers_list)
-    plt.tight_layout()
-    plt.show()
+    # 4) Save the raw results to CSV
+    df.to_csv("real_benchmark_results.csv", index=False)
+    print("\nSaved full results to real_benchmark_results.csv")
 
-    plt.figure(figsize=(10, 8))
-    plt.title("Decryption Speed (tasks/sec)")
-    plt.imshow(pivot_dec, aspect='auto', origin='lower', interpolation='nearest')
-    plt.colorbar(label='Tasks/sec')
-    plt.xlabel("Chunksize")
-    plt.ylabel("Workers")
-    plt.xticks(range(len(chunksize_list)), chunksize_list, rotation=45)
-    plt.yticks(range(len(workers_list)), workers_list)
-    plt.tight_layout()
-    plt.show()
+    # 5) Plot heatmaps for encryption & decryption for each case
+    for mode in ['speed_enc', 'speed_dec']:
+        for case_name in df['case'].unique():
+            subset = df[df['case'] == case_name]
+            pivot = subset.pivot(index='workers', columns='chunksize', values=mode)
 
-    cleanup_shm(shm_enc)
+            plt.figure(figsize=(8, 6))
+            title = f"{case_name} {'Encryption' if mode == 'speed_enc' else 'Decryption'} Speed"
+            plt.title(title)
+            plt.imshow(pivot, aspect='auto', origin='lower', interpolation='nearest')
+            plt.colorbar(label='Tasks/sec')
+            plt.xlabel("Chunksize")
+            plt.ylabel("Workers")
+            plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=45)
+            plt.yticks(range(len(pivot.index)), pivot.index)
+            plt.tight_layout()
+            plt.show()
 
 if __name__ == "__main__":
     main()
