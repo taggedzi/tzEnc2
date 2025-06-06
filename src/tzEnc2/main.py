@@ -344,6 +344,7 @@ def find_char_locations_in_list(in_char: str, char_list: List[str]) -> List[int]
     """
     return [idx for idx, c in enumerate(char_list) if c == in_char]
 
+
 @FunctionProfiler.track()
 def get_coord_math(
     idx: int,
@@ -351,51 +352,57 @@ def get_coord_math(
     grid_size: int,
     grid_seed: bytes,
     time: int,
-) -> List[int]:
+) -> Tuple[int, List[int]]:
     """
-    Determine the 3D grid coordinates of a given character after a deterministic shuffle.
+    Compute the 3D coordinates of a character in a deterministically shuffled grid.
 
-    The character list is deterministically shuffled based on a seed and time value.
-    All occurrences of the target character are located within the shuffled list.
-    One of those locations is randomly selected, and its position in a theoretical
-    3D cube (grid_size x grid_size x grid_size) is computed and returned.
+    The grid is based on a deterministic shuffle of a global character list (PADDING_LIST),
+    influenced by a cryptographic seed and a time value. The function finds all positions
+    where the given character appears, selects one randomly, and maps its index to a
+    3D coordinate in a cube of size (grid_size³).
 
     Args:
-        character (str): The character to locate in the grid.
-        grid_size (int): The length of one side of the 3D cube (grid volume = grid_size³).
-        grid_seed (bytes): A 32-byte cryptographic seed used for deterministic shuffling.
-        time (int): A numeric time or counter value to vary the shuffle key.
+        idx (int): The index this character is associated with (passed through).
+        character (str): The character to locate in the shuffled grid.
+        grid_size (int): Length of one cube edge (total volume = grid_size³).
+        grid_seed (bytes): 32-byte seed used to deterministically shuffle the grid.
+        time (int): Integer (e.g., timestamp) to vary the shuffle key.
 
     Returns:
-        List[int]: A list of three integers [x, y, z] representing the grid coordinates.
+        Tuple[int, List[int]]: Tuple of the input index and the [x, y, z] grid coordinates.
 
     Raises:
-        ValueError: If the character does not appear in the shuffled character list.
+        ValueError: If the character is not found in the shuffled list.
     """
     log.info("[get_coord_math] time=%s char=%r", time, character)
-    shm_list = PADDING_LIST
-    shuffled_character_list = shuffle_list(
-        character_list=shm_list, seed=grid_seed, time=time
-    )
 
-    character_index_list = find_char_locations_in_list(
-        in_char=character, char_list=shuffled_character_list
-    )
+    # Deterministically shuffle the padding list
+    shuffled_chars = shuffle_list(PADDING_LIST, seed=grid_seed, time=time)
 
-    chosen_index = secrets.choice(character_index_list)
+    # Find all positions of the target character
+    char_indices = find_char_locations_in_list(character, shuffled_chars)
+    if not char_indices:
+        log.error("Character %r not found in shuffled grid.", character)
+        raise ValueError(f"Character {repr(character)} not found in shuffled grid.")
 
-    # Compute 3D grid coordinates from linear index
+    # Randomly choose one occurrence
+    chosen_index = secrets.choice(char_indices)
+
+    # Convert 1D index to 3D coordinates (x, y, z)
     z = chosen_index % grid_size
     y = (chosen_index // grid_size) % grid_size
     x = chosen_index // (grid_size * grid_size)
-    log.info("[get_coord_math] time=%s char=%r → coord=%s", time, character, [x, y, z])
-    return idx, [x, y, z]
+
+    coord = [x, y, z]
+    log.info("[get_coord_math] char=%r → coord=%s", character, coord)
+
+    return idx, coord
+
 
 @FunctionProfiler.track()
 def get_char_math(
     idx: int,
     coords: Union[List[int], Tuple[int, int, int]],
-    # character_list: List[str],
     grid_size: int,
     grid_seed: bytes,
     time: int
@@ -410,7 +417,6 @@ def get_char_math(
     Args:
         idx (int): index
         coords (Union[List[int], Tuple[int, int, int]]): A 3D coordinate [x, y, z] in the grid.
-        
         grid_size (int): The length of one side of the cube-shaped grid (volume = grid_size³).
         grid_seed (bytes): A 32-byte cryptographic seed for deterministic shuffling.
         time (int): A time or counter value used in key derivation for shuffling.
