@@ -137,3 +137,5 @@ Desktop.ini
 
 # WSL
 *.bak
+*.tzenc
+*.txt
