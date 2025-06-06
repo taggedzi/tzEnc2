@@ -7,7 +7,7 @@ import hashlib
 import json
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory
-from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional, Any, Literal
+from typing import Union, List, Set, Tuple, TypeVar, Dict, Optional, Any, Literal, cast
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
 from Crypto.Util import Counter
@@ -21,8 +21,8 @@ T = TypeVar("T")  # Allow generic lists of any type
 log = get_logger(__name__)
 
 # Shared memory value to reduce pickle load on ProcessPoolExecutor for large character lists.
-PADDING_LIST = None  # type: list[str]
-_worker_shm: shared_memory.SharedMemory = None  # Keep the SharedMemory object alive
+PADDING_LIST = None  # type: Optional[List[str]]
+_worker_shm: Optional[shared_memory.SharedMemory] = None  # Keep the SharedMemory object alive
 
 
 @FunctionProfiler.track()
@@ -145,8 +145,8 @@ def find_used_character_block_indexes(
 
 @FunctionProfiler.track()
 def derive_aes_key(
-    base_bytes: bytes, 
-    number: int, 
+    base_bytes: bytes,
+    number: int,
     aes_bits: Literal[128, 192, 256] = 128
 ) -> bytes:
     """
@@ -372,10 +372,14 @@ def get_coord_math(
 
     Raises:
         ValueError: If the character is not found in the shuffled list.
+        RuntimeError: If the global PADDING_LIST is not set when running.
     """
     log.info("[get_coord_math] time=%s char=%r", time, character)
 
     # Deterministically shuffle the padding list
+    if PADDING_LIST is None:
+        log.error("PADDING_LIST was accessed before being initialized.")
+        raise RuntimeError("Global character list (PADDING_LIST) is not initialized.")
     shuffled_chars = shuffle_list(PADDING_LIST, seed=grid_seed, time=time)
 
     # Find all positions of the target character
@@ -425,6 +429,7 @@ def get_char_math(
     Raises:
         ValueError: If coordinates are invalid or out of bounds.
         IndexError: If the computed index exceeds the list bounds.
+        RuntimeError: If the global PADDING_LIST is not set at run time.
     """
     if not isinstance(coords, (list, tuple)) or len(coords) != 3:
         log.error("Invalid coordinates: %r", coords)
@@ -437,6 +442,9 @@ def get_char_math(
     x, y, z = coords
     index = x * (grid_size ** 2) + y * grid_size + z
 
+    if PADDING_LIST is None:
+        log.error("PADDING_LIST was accessed before being initialized.")
+        raise RuntimeError("Global character list (PADDING_LIST) is not initialized.")
     shuffled_list = shuffle_list(PADDING_LIST, seed=grid_seed, time=time)
 
     if index >= len(shuffled_list):
@@ -470,7 +478,7 @@ def collect_chars_by_indexes(
 
     max_index = len(character_blocks) - 1
     for i in indexes:
-        if not (0 <= i <= max_index):
+        if not 0 <= i <= max_index:
             log.error("Block index %d out of bounds (max allowed: %d)", i, max_index)
             raise IndexError(f"Block index {i} out of bounds (max allowed: {max_index})")
 
@@ -591,6 +599,9 @@ def init_worker_shared(shm_name: str, size: int) -> None:
     global PADDING_LIST, _worker_shm
 
     # 1. Attach to shared memory block by name
+    if _worker_shm is None:
+        log.error("_worker_shm was accessed before being initialized.")
+        raise RuntimeError("Shared memory not initialized: _worker_shm is None.")
     _worker_shm = shared_memory.SharedMemory(name=shm_name)
 
     # 2. Extract `size` bytes and decode from UTF-8
@@ -832,7 +843,7 @@ def decrypt(
         for i, coords in enumerate(cipher_text)
     ]
 
-    message: List[str] = [None] * len(tasks)
+    message: List[Optional[str]] = [None] * len(tasks)
     max_workers = max(1, max_workers)
     chunksize = max(1, chunksize)
 
@@ -854,4 +865,4 @@ def decrypt(
         shm.close()
         shm.unlink()
 
-    return "".join(message)
+    return "".join(cast(List[str], message))
