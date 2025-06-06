@@ -743,100 +743,109 @@ def encrypt(
     return json_output
 
 
-def _unpack_get_char(arg_tuple: Tuple[int, List[int], int, bytes, int]) -> Tuple[int, Any]:
+def _unpack_get_char(args: Tuple[int, List[int], int, bytes, int]) -> Tuple[int, Any]:
     """
-    We expect arg_tuple = (i, ch, grid_size, grid_seed, t). We pull
-    PADDING_LIST (set by init_worker) instead of passing it in every time.
+    Unpack arguments and call get_char_math using the global PADDING_LIST.
+
+    This function is designed for use with multiprocessing where PADDING_LIST
+    is initialized in each worker via init_worker_shared. It avoids passing
+    large structures repeatedly by relying on per-process global setup.
+
+    Args:
+        args (Tuple): A tuple containing:
+            - index (int)
+            - coordinates (List[int])
+            - grid_size (int)
+            - grid_seed (bytes)
+            - time (int)
+
+    Returns:
+        Tuple[int, Any]: Result from get_char_math, typically (index, character).
     """
-    i, coords, grid_size, grid_seed, t = arg_tuple
-    # Use the global PADDING_LIST here, NOT a local variable:
-    return get_char_math(i, coords, grid_size, grid_seed, t)
+    index, coords, grid_size, grid_seed, time = args
+    return get_char_math(index, coords, grid_size, grid_seed, time)
 
 
 @FunctionProfiler.track()
 def decrypt(
-    password: str, 
-    json_data: Dict, 
+    password: str,
+    json_data: Dict,
     digest_passphrase: str = "",
     max_workers: int = CONFIG["parallel"]["cpu_count"],
-    chunksize: int = CONFIG["parallel"]["chunksize"]) -> str:
+    chunksize: int = CONFIG["parallel"]["chunksize"]
+) -> str:
     """
-    Decrypt a coordinate-based cipher back into the original plaintext message.
-
-    This function reconstructs the same character grid used during encryption
-    based on the provided password and metadata in `json_data`. It then maps
-    each coordinate back to its corresponding character in the shuffled grid.
+    Decrypt a coordinate-based cipher into its original plaintext message.
 
     Args:
         password (str): The password used during encryption.
-        json_data (Dict): A dictionary containing:
-            - "salt": Hex string used for key derivation.
-            - "character_blocks": List of block indexes used.
-            - "redundancy": The redundancy factor used in grid construction.
-            - "cipher_text": List of [x, y, z] grid coordinates (encrypted characters).
-        digest_passphrase (str): The passphrase used to validate the digest.
+        json_data (Dict): Contains metadata and cipher coordinates:
+            - "salt": Hex-encoded string used for key derivation.
+            - "character_blocks": List of indexes into CHARACTER_BLOCKS.
+            - "redundancy": Repetition factor used to pad the grid.
+            - "cipher_text": List of [x, y, z] coordinates.
+        digest_passphrase (str): Passphrase to verify message integrity.
+        max_workers (int): Number of parallel processes.
+        chunksize (int): Chunk size per worker.
 
     Returns:
-        str: The original decrypted plaintext message.
+        str: The decrypted plaintext message.
     """
+    # --- Input validation ---
     if not isinstance(password, str) or not 3 <= len(password) <= 256:
         log.error("Password must be a string between 3 and 256 characters.")
         raise ValueError("Password must be a string between 3 and 256 characters.")
-    if digest_passphrase is not None and not 3 <= len(digest_passphrase) <= 256:
-        log.error("Digest passphrase, if set, must be between 3 and 256 characters.")
-        raise ValueError("Digest passphrase, if set, must be between 3 and 256 characters.")
 
-    # Digest check
+    if digest_passphrase and not 3 <= len(digest_passphrase) <= 256:
+        log.error("Digest passphrase must be between 3 and 256 characters.")
+        raise ValueError("Digest passphrase must be between 3 and 256 characters.")
+
+    # --- Verify digest ---
     handle_digest_verification(
         json_data, digest_passphrase=digest_passphrase, require_digest=True
     )
 
+    # --- Extract fields from input JSON ---
     salt = json_data["salt"]
     character_blocks = json_data["character_blocks"]
     redundancy = json_data["redundancy"]
     cipher_text = json_data["cipher_text"]
 
-    # Derive keys
+    # --- Derive key materials from password + salt ---
     salt_bytes = bytes.fromhex(salt)
-    start_time, time_increment, grid_seed = generate_key_materials(
-        password=password, salt=salt_bytes
-    )
+    start_time, time_increment, grid_seed = generate_key_materials(password, salt_bytes)
 
-    # Reconstruct the character list
-    expanded_character_list = collect_chars_by_indexes(
-        CHARACTER_BLOCKS, character_blocks
-    )
+    # --- Reconstruct padded character grid ---
+    expanded_chars = collect_chars_by_indexes(CHARACTER_BLOCKS, character_blocks)
+    grid_size = calculate_minimum_grid_size(len(expanded_chars), redundancy)
+    padded_chars = pad_character_list_to_grid(expanded_chars, grid_size)
 
-    # Determine grid size and pad character list
-    grid_size = calculate_minimum_grid_size(len(expanded_character_list), redundancy)
-    padded_expanded_character_list = pad_character_list_to_grid(
-        expanded_character_list=expanded_character_list, grid_size=grid_size
-    )
-    
-    joined_str = "".join(padded_expanded_character_list)        # single Python str of length N
-    utf8_bytes = joined_str.encode("utf-8")             # raw bytes, length  size_bytes
+    utf8_bytes = "".join(padded_chars).encode("utf-8")
     size_bytes = len(utf8_bytes)
+
     shm = shared_memory.SharedMemory(create=True, size=size_bytes)
     shm.buf[:size_bytes] = utf8_bytes
 
-    tasks: list[tuple[int, str, List[str], int, bytes, int]] = []
-    for i, coords in enumerate(cipher_text):
-        t = start_time + i * time_increment
-        tasks.append((i, coords, grid_size, grid_seed, t))
-        
-    num_tasks = len(tasks)
-    message = [None] * num_tasks
+    # --- Prepare tasks for parallel decoding ---
+    tasks = [
+        (i, coords, grid_size, grid_seed, start_time + i * time_increment)
+        for i, coords in enumerate(cipher_text)
+    ]
+
+    message: List[str] = [None] * len(tasks)
     max_workers = max(1, max_workers)
     chunksize = max(1, chunksize)
-    
+
     print(f"[main.decrypt] max_workers: {max_workers}, chunksize: {chunksize}")
+
+    # --- Coordinate resolution via multiprocessing ---
     try:
-        with ProcessPoolExecutor(max_workers=max_workers,
-                                initializer=init_worker_shared,
-                                initargs=(shm.name, size_bytes)) as executor:
-            # executor.map will feed “chunks” of tasks to each worker, instead of one Future each.
-            # The lambda unpacks our argument tuple into get_coord_math.
-            for idx, char in executor.map(_unpack_get_char, tasks, chunksize=10):
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=init_worker_shared,
+            initargs=(shm.name, size_bytes)
+        ) as executor:
+            for idx, char in executor.map(_unpack_get_char, tasks, chunksize=chunksize):
                 message[idx] = char
     except Exception as e:
         print(f"An exception has been raised: {e}")
@@ -844,13 +853,5 @@ def decrypt(
     finally:
         shm.close()
         shm.unlink()
-        
+
     return "".join(message)
-
-
-if __name__ == "__main__":
-    
-    cipher = encrypt("test", 20, "hello there 뙱", "test2")
-    print(cipher)
-    message = decrypt("test", cipher, "test2")
-    print(message)
