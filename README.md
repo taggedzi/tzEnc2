@@ -126,10 +126,6 @@ pip install -e .
 
 ---
 
-Absolutely! Here’s a clear explanation for your README or documentation:
-
----
-
 ### What Does "Redundancy" Mean in tzEnc2?
 
 In **tzEnc2**, **redundancy** controls the number of times every character in your message is **guaranteed to appear** in the encrypted data’s underlying character grid.
