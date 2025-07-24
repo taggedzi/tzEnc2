@@ -15,7 +15,7 @@
 
 * Instead of directly storing or transmitting your message, each character is mapped to a unique position (an x, y, z coordinate) in a large, scrambled cube (the grid).
 * The arrangement of this grid isn’t random: it’s generated in a **deterministic** way using a combination of your password, a random salt, and a time-like parameter (an incrementing counter).
-* The process ensures that the same character can appear in many different positions, and each message, password, and time produces a totally unique mapping.
+* The process ensures that the same character can appear in many different positions, and each message, password, and time produces a totally unique mapping. Every time. The same message never encodes twice even with all the same data input.
 
 #### **What makes this useful or different?**
 
