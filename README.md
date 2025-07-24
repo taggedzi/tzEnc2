@@ -14,21 +14,30 @@
 
 - **CLI and Gradio Web UI** included for testing.
 - Modern cryptography (`argon2id`, AES, HMAC).
-- Easily installable via pip.
+- Easily installable via pip from source (not on PyPI).
 - **For demonstration, review, and testing purposes only.**
 
 ---
 
 ## 🚀 Quickstart
 
-### 1. Install from PyPI
+### 1. Install from Source
 
 > Requires **Python 3.8+**  
 > (Best practice: use a [virtual environment](https://docs.python.org/3/library/venv.html))
 
+Clone the repository:
 ```bash
-pip install tzEnc2
+git clone https://github.com/taggedzi/tzEnc2.git
+cd tzEnc2
 ````
+
+Install dependencies and the package (editable mode recommended for testing):
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
 
 ### 2. Usage
 
