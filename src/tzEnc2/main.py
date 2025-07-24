@@ -808,9 +808,13 @@ def decrypt(
         raise ValueError("Digest passphrase must be between 3 and 256 characters.")
 
     # --- Verify digest ---
+    require_digest = False
+    if digest_passphrase is not None:
+        require_digest = True
     handle_digest_verification(
-        json_data, digest_passphrase=digest_passphrase, require_digest=True
+        json_data, digest_passphrase=digest_passphrase, require_digest=require_digest
     )
+
 
     # --- Extract fields from input JSON ---
     salt = json_data["salt"]
